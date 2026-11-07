@@ -38,10 +38,12 @@
     </div>
 </div>
 
+<!-- 元のこの部分を書き換えます -->
 <div class="container" style="background: none; box-shadow: none; padding: 0;">
     <div class="backup-section">
         <button class="btn-secondary" onclick="exportData()">データをエクスポート (保存)</button>
         <button class="btn-secondary" onclick="document.getElementById('importFile').click()">インポート</button>
+        <button class="btn-danger" onclick="resetAllData()" style="background-color: #b91c1c;">データをリセット</button> <!-- ←この行を追加 -->
         <input type="file" id="importFile" style="display:none" onchange="importData(event)">
     </div>
 </div>
