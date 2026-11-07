@@ -1,0 +1,162 @@
+:root {
+    --primary: #4f46e5;
+    --success: #16a34a;
+    --danger: #dc2626;
+    --bg: #f3f4f6;
+}
+
+body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    background-color: var(--bg);
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.container {
+    max-width: 600px;
+    width: 100%;
+    background: white;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+    box-sizing: border-box;
+}
+
+h1 {
+    text-align: center;
+    color: #1f2937;
+    margin-top: 0;
+}
+
+.form-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 16px;
+}
+
+button {
+    padding: 10px 20px;
+    background-color: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+button:hover {
+    opacity: 0.9;
+}
+
+.card {
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 40px 20px;
+    text-align: center;
+    margin-bottom: 20px;
+    min-height: 140px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    background-color: #fafafa;
+}
+
+.word-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    margin-bottom: 10px;
+}
+
+.word {
+    font-size: 32px;
+    font-weight: bold;
+    color: #111827;
+}
+
+.btn-audio {
+    background: none;
+    border: none;
+    font-size: 24px;
+    padding: 5px;
+    cursor: pointer;
+    border-radius: 50px;
+}
+.btn-audio:hover {
+    background-color: #e5e7eb;
+    opacity: 1;
+}
+
+.meaning {
+    font-size: 24px;
+    color: #4b5563;
+    display: none;
+}
+
+.btn-group {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+}
+
+.btn-success {
+    background-color: var(--success);
+}
+
+.btn-danger {
+    background-color: var(--danger);
+}
+
+.btn-secondary {
+    background-color: #4b5563;
+}
+
+.stats {
+    text-align: center;
+    color: #6b7280;
+    font-size: 14px;
+    margin-top: 15px;
+}
+
+.help-text {
+    text-align: center;
+    color: #9ca3af;
+    font-size: 12px;
+    margin-top: 10px;
+}
+
+.backup-section {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 10px;
+}
+
+/* スマートフォン向けの調整 */
+@media (max-width: 480px) {
+    .form-group {
+        flex-direction: column;
+    }
+    .backup-section {
+        flex-direction: column;
+        width: 100%;
+    }
+    .help-text {
+        display: none; /* スマホではキーボード案内を非表示に */
+    }
+}

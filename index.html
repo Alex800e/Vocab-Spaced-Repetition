@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>忘却曲線 英単語学習</title>
+    <!-- CSSファイルの読み込み -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="container">
+    <h1>忘却曲線英単語</h1>
+    
+    <!-- 単語追加フォーム -->
+    <div class="form-group">
+        <input type="text" id="wordInput" placeholder="英単語 (例: apple)">
+        <input type="text" id="meaningInput" placeholder="意味 (例: りんご)">
+        <button onclick="addWord()">追加</button>
+    </div>
+
+    <!-- 学習エリア -->
+    <div id="learningArea">
+        <div class="card" onclick="toggleMeaning()">
+            <div class="word-container">
+                <div id="cardWord" class="word">単語がありません</div>
+                <!-- 音声再生用のスピーカーボタン -->
+                <button id="speakBtn" class="btn-audio" onclick="speakCurrentWord(event)" style="display:none;">🔊</button>
+            </div>
+            <div id="cardMeaning" class="meaning">意味</div>
+        </div>
+        <div class="btn-group" id="actionButtons" style="display:none;">
+            <button class="btn-danger" onclick="reviewResult(false)">忘れた [←]</button>
+            <button class="btn-success" onclick="reviewResult(true)">覚えている [→]</button>
+        </div>
+        <div class="stats" id="todayCount">本日の復習対象: 0問</div>
+        <div class="help-text">※PCは [Space] で意味表示、[←] [→] キーでも操作できます</div>
+    </div>
+</div>
+
+<div class="container" style="background: none; box-shadow: none; padding: 0;">
+    <div class="backup-section">
+        <button class="btn-secondary" onclick="exportData()">データをエクスポート (保存)</button>
+        <button class="btn-secondary" onclick="document.getElementById('importFile').click()">インポート</button>
+        <input type="file" id="importFile" style="display:none" onchange="importData(event)">
+    </div>
+</div>
+
+<!-- JavaScriptファイルの読み込み -->
+<script src="js/app.js"></script>
+</body>
+</html>
