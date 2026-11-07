@@ -1,6 +1,72 @@
-// データ構造: [{word: "", meaning: "", interval: 1, nextReview: timestamp}]
-let words = JSON.parse(localStorage.getItem('vocab_data')) || [];
+// 小学校4〜6年生で習う代表的な英単語の初期データ
+const defaultWords = [
+    { word: "hello", meaning: "こんにちは" },
+    { word: "thank you", meaning: "ありがとう" },
+    { word: "welcome", meaning: "ようこそ、歓迎する" },
+    { word: "please", meaning: "おねがいします" },
+    { word: "school", meaning: "学校" },
+    { word: "english", meaning: "英語" },
+    { word: "math", meaning: "算数、数学" },
+    { word: "science", meaning: "理科、科学" },
+    { word: "music", meaning: "音楽" },
+    { word: "art", meaning: "図工、美術" },
+    { word: "homeroom", meaning: "学級活動、ホームルーム" },
+    { word: "Sunday", meaning: "日曜日" },
+    { word: "Monday", meaning: "月曜日" },
+    { word: "Friday", meaning: "金曜日" },
+    { word: "January", meaning: "1月" },
+    { word: "August", meaning: "8月" },
+    { word: "December", meaning: "12月" },
+    { word: "friend", meaning: "友達" },
+    { word: "teacher", meaning: "先生" },
+    { word: "station", meaning: "駅" },
+    { word: "hospital", meaning: "病院" },
+    { word: "want", meaning: "〜が欲しい" },
+    { word: "like", meaning: "〜が好き" },
+    { word: "play", meaning: "（スポーツや楽器を）する、遊ぶ" },
+    { word: "study", meaning: "勉強する" },
+    { word: "sports day", meaning: "運動会" },
+    { word: "school trip", meaning: "修学旅行" },
+    { word: "tomorrow", meaning: "明日" },
+    { word: "yesterday", meaning: "昨日" }
+];
+
+let words = [];
 let reviewQueue = [];
+
+// 初期データの読み込み・設定を行う関数
+function loadOrInitData() {
+    const savedData = localStorage.getItem('vocab_data');
+    if (!savedData) {
+        // 初めて開く、またはリセットされた時は初期データをセット
+        words = defaultWords.map(w => ({
+            word: w.word,
+            meaning: w.meaning,
+            interval: 1,
+            nextReview: Date.now()
+        }));
+        localStorage.setItem('vocab_data', JSON.stringify(words));
+    } else {
+        words = JSON.parse(savedData);
+        // 既存データがある場合、初期データに新単語があれば自動マージ
+        let updated = false;
+        defaultWords.forEach(dw => {
+            const exists = words.some(w => w.word.toLowerCase() === dw.word.toLowerCase());
+            if (!exists) {
+                words.push({
+                    word: dw.word,
+                    meaning: dw.meaning,
+                    interval: 1,
+                    nextReview: Date.now()
+                });
+                updated = true;
+            }
+        });
+        if (updated) {
+            localStorage.setItem('vocab_data', JSON.stringify(words));
+        }
+    }
+}
 
 // データをLocalStorageに保存
 function saveData() {
@@ -23,8 +89,8 @@ function addWord() {
     words.push({
         word: word,
         meaning: meaning,
-        interval: 1, // 初期復習間隔（1日）
-        nextReview: Date.now() // 追加直後はすぐ復習可能
+        interval: 1,
+        nextReview: Date.now()
     });
 
     saveData();
@@ -63,7 +129,6 @@ function nextCard() {
         return;
     }
 
-    // キューの先頭にある単語を表示
     const currentWord = reviewQueue[0];
     cardWord.innerText = currentWord.word;
     cardMeaning.innerText = currentWord.meaning;
@@ -74,25 +139,27 @@ function nextCard() {
     speakWord(currentWord.word);
 }
 
-// 音声読み上げ関数（Web Speech API）
+// 音声読み上げ関数（修正版）
 function speakWord(text) {
     if ('speechSynthesis' in window) {
-        // すでに再生中の音声があれば停止
-        window.speechSynthesis.cancel();
+        window.speechSynthesis.cancel(); // 前の音声を止める
         
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = 'en-US'; // アメリカ英語に設定 ('en-GB' にすればイギリス英語になります)
-        utterance.rate = 1.0;     // 読み上げ速度 (0.1 〜 10)
+        utterance.lang = 'en-US'; // アメリカ英語
+        utterance.rate = 0.9;     // 少しだけ聞き取りやすいよう速度を調整（1.0が標準）
         
         window.speechSynthesis.speak(utterance);
     }
 }
 
-// スピーカーボタンクリック時のイベント（カードのクリックイベント発火を防ぐ）
+// スピーカーボタンクリック時のイベント（修正版）
 function speakCurrentWord(event) {
-    event.stopPropagation(); // カード全体のクリックイベントが発生するのを防ぐ
-    if (reviewQueue.length > 0) {
-        speakWord(reviewQueue[0].word);
+    event.stopPropagation(); // カードがクリックされるのを防ぐ
+    
+    // 現在画面に表示されている英単語のテキストを取得して発音
+    const currentWordText = document.getElementById('cardWord').innerText;
+    if (reviewQueue.length > 0 && currentWordText && currentWordText !== "単語がありません") {
+        speakWord(currentWordText);
     }
 }
 
@@ -125,20 +192,28 @@ function reviewResult(remembered) {
     nextCard();
 }
 
+// 学習データのリセット機能（新規追加）
+function resetAllData() {
+    if (confirm("これまでの学習進捗や追加した単語が消去され、小学生向けの初期状態に戻ります。本当によろしいですか？")) {
+        localStorage.removeItem('vocab_data');
+        loadOrInitData();
+        initSession();
+        alert("学習データをリセットしました。");
+    }
+}
+
 // キーボードショートカットの実装
 document.addEventListener('keydown', function(event) {
-    // 入力フォームにフォーカスがある時はショートカットを無効化する
     if (document.activeElement.tagName === 'INPUT') return;
-
     if (reviewQueue.length === 0) return;
 
     if (event.code === 'Space') {
-        event.preventDefault(); // スペースキーによる画面スクロールを防止
+        event.preventDefault();
         toggleMeaning();
     } else if (event.code === 'ArrowLeft') {
-        reviewResult(false); // 左矢印キーで「忘れた」
+        reviewResult(false);
     } else if (event.code === 'ArrowRight') {
-        reviewResult(true);  // 右矢印キーで「覚えている」
+        reviewResult(true);
     }
 });
 
@@ -159,7 +234,7 @@ function exportData() {
 
 // データの復元（JSONインポート）
 function importData(event) {
-    const file = event.target.files[0];
+    const file = event.target.files;
     if (!file) return;
     
     const reader = new FileReader();
@@ -183,5 +258,6 @@ function importData(event) {
     reader.readAsText(file);
 }
 
-// ページを開いたときに起動
+// 起動時処理
+loadOrInitData();
 initSession();
