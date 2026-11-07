@@ -1,5 +1,8 @@
-// 小学校4〜6年生で習う代表的な英単語の初期データ
-const defaultWords = [
+// ==========================================
+// ★ここに記憶したい英単語リストをすべて記述します★
+// 好きなだけ自由に追加・変更してください。
+// ==========================================
+const myWordList = [
     { word: "hello", meaning: "こんにちは" },
     { word: "thank you", meaning: "ありがとう" },
     { word: "welcome", meaning: "ようこそ、歓迎する" },
@@ -29,80 +32,54 @@ const defaultWords = [
     { word: "school trip", meaning: "修学旅行" },
     { word: "tomorrow", meaning: "明日" },
     { word: "yesterday", meaning: "昨日" }
+    // 新しい単語を追加したい場合は、ここにカンマ(,)区切りで同じように追加していけます
 ];
 
 let words = [];
 let reviewQueue = [];
 
-// 初期データの読み込み・設定を行う関数
+// データの読み込みと初期化
 function loadOrInitData() {
-    const savedData = localStorage.getItem('vocab_data');
-    if (!savedData) {
-        // 初めて開く、またはリセットされた時は初期データをセット
-        words = defaultWords.map(w => ({
-            word: w.word,
-            meaning: w.meaning,
+    // それぞれのデバイスのブラウザに保存されている記憶進捗（スケジュール）を読み込む
+    const savedProgress = JSON.parse(localStorage.getItem('vocab_progress')) || {};
+    
+    // JavaScript内にある単語リスト（myWordList）をベースに学習データを組み立てる
+    words = myWordList.map(item => {
+        // すでに過去に解いた進捗データがあればそれを引き継ぎ、なければ新しく作る
+        const progress = savedProgress[item.word.toLowerCase()] || {
             interval: 1,
-            nextReview: Date.now()
-        }));
-        localStorage.setItem('vocab_data', JSON.stringify(words));
-    } else {
-        words = JSON.parse(savedData);
-        // 既存データがある場合、初期データに新単語があれば自動マージ
-        let updated = false;
-        defaultWords.forEach(dw => {
-            const exists = words.some(w => w.word.toLowerCase() === dw.word.toLowerCase());
-            if (!exists) {
-                words.push({
-                    word: dw.word,
-                    meaning: dw.meaning,
-                    interval: 1,
-                    nextReview: Date.now()
-                });
-                updated = true;
-            }
-        });
-        if (updated) {
-            localStorage.setItem('vocab_data', JSON.stringify(words));
-        }
-    }
-}
-
-// データをLocalStorageに保存
-function saveData() {
-    localStorage.setItem('vocab_data', JSON.stringify(words));
-    updateStats();
-}
-
-// 単語の追加
-function addWord() {
-    const wordInput = document.getElementById('wordInput');
-    const meaningInput = document.getElementById('meaningInput');
-    const word = wordInput.value.trim();
-    const meaning = meaningInput.value.trim();
-
-    if (!word || !meaning) {
-        alert('単語と意味を入力してください');
-        return;
-    }
-
-    words.push({
-        word: word,
-        meaning: meaning,
-        interval: 1,
-        nextReview: Date.now()
+            nextReview: Date.now() // 初期状態はすぐ出題
+        };
+        
+        return {
+            word: item.word,
+            meaning: item.meaning,
+            interval: progress.interval,
+            nextReview: progress.nextReview
+        };
     });
+    
+    // 現在の最新の進捗状態を保存
+    saveProgressData();
+}
 
-    saveData();
-    wordInput.value = '';
-    meaningInput.value = '';
-    alert(`「${word}」を追加しました`);
-    initSession();
+// 個々のデバイス（LocalStorage）に各単語の「進捗スケジュールだけ」を保存
+function saveProgressData() {
+    const progressToSave = {};
+    words.forEach(w => {
+        progressToSave[w.word.toLowerCase()] = {
+            interval: w.interval,
+            nextReview: w.nextReview
+        };
+    });
+    localStorage.setItem('vocab_progress', JSON.stringify(progressToSave));
+    updateStats();
 }
 
 // 学習セッションの初期化（復習対象の抽出）
 function initSession() {
     const now = Date.now();
+    // 復習時間を過ぎているものを今日のクイズとして抽出
     reviewQueue = words.filter(w => w.nextReview <= now);
     updateStats();
     nextCard();
@@ -139,24 +116,42 @@ function nextCard() {
     speakWord(currentWord.word);
 }
 
-// 音声読み上げ関数（修正版）
+// 音声読み上げ関数（ブラウザの準備を待つ完全版）
 function speakWord(text) {
     if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel(); // 前の音声を止める
         
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'en-US'; // アメリカ英語
-        utterance.rate = 0.9;     // 少しだけ聞き取りやすいよう速度を調整（1.0が標準）
-        
-        window.speechSynthesis.speak(utterance);
+        utterance.rate = 0.9;     // スピード
+
+        // 音声データをセットする処理
+        const setVoiceAndSpeak = () => {
+            const voices = window.speechSynthesis.getVoices();
+            // パソコン内の英語（アメリカ英語優先）の声を探す
+            const enVoice = voices.find(v => v.lang === 'en-US') || voices.find(v => v.lang.includes('en'));
+            if (enVoice) {
+                utterance.voice = enVoice;
+            }
+            window.speechSynthesis.speak(utterance);
+        };
+
+        // ブラウザの音声準備状況をチェック
+        if (window.speechSynthesis.getVoices().length === 0) {
+            // まだ準備ができていない場合は、準備完了イベント（onvoiceschanged）を待ってから実行
+            window.speechSynthesis.onvoiceschanged = setVoiceAndSpeak;
+        } else {
+            // すでに準備ができている場合は、すぐ実行
+            setVoiceAndSpeak();
+        }
     }
 }
 
-// スピーカーボタンクリック時のイベント（修正版）
+
+
+// スピーカーボタンクリック時のイベント
 function speakCurrentWord(event) {
-    event.stopPropagation(); // カードがクリックされるのを防ぐ
-    
-    // 現在画面に表示されている英単語のテキストを取得して発音
+    event.stopPropagation();
     const currentWordText = document.getElementById('cardWord').innerText;
     if (reviewQueue.length > 0 && currentWordText && currentWordText !== "単語がありません") {
         speakWord(currentWordText);
@@ -180,25 +175,27 @@ function reviewResult(remembered) {
     if (!targetInWords) return;
 
     if (remembered) {
+        // 【覚えている】間隔を倍にのばす
         targetInWords.interval = targetInWords.interval * 2;
         targetInWords.nextReview = Date.now() + (targetInWords.interval * 24 * 60 * 60 * 1000);
     } else {
+        // 【忘れた】間隔を1日にリセットして最後尾へ
         targetInWords.interval = 1;
         targetInWords.nextReview = Date.now() + (1 * 24 * 60 * 60 * 1000);
         reviewQueue.push(targetInWords);
     }
 
-    saveData();
+    saveProgressData();
     nextCard();
 }
 
-// 学習データのリセット機能（新規追加）
+// 学習データのリセット機能（進捗のみをまっさらにして初期状態に戻す）
 function resetAllData() {
-    if (confirm("これまでの学習進捗や追加した単語が消去され、小学生向けの初期状態に戻ります。本当によろしいですか？")) {
-        localStorage.removeItem('vocab_data');
+    if (confirm("これまでの学習進捗がすべて消去され、最初からやり直しになります。よろしいですか？")) {
+        localStorage.removeItem('vocab_progress');
         loadOrInitData();
         initSession();
-        alert("学習データをリセットしました。");
+        alert("学習進捗をリセットしました。");
     }
 }
 
@@ -219,14 +216,11 @@ document.addEventListener('keydown', function(event) {
 
 // データのバックアップ（JSONエクスポート）
 function exportData() {
-    if (words.length === 0) {
-        alert('保存するデータがありません');
-        return;
-    }
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(words));
+    const savedProgress = localStorage.getItem('vocab_progress') || "{}";
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(savedProgress);
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `vocab_backup_${new Date().toISOString().slice(0,10)}.json`);
+    downloadAnchor.setAttribute("download", `vocab_progress_backup_${new Date().toISOString().slice(0,10)}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -234,19 +228,19 @@ function exportData() {
 
 // データの復元（JSONインポート）
 function importData(event) {
-    const file = event.target.files;
+    const file = event.target.files[0];
     if (!file) return;
     
     const reader = new FileReader();
     reader.onload = function(e) {
         try {
             const imported = JSON.parse(e.target.result);
-            if (Array.isArray(imported)) {
-                if (confirm('現在のデータが上書きされますがよろしいですか？')) {
-                    words = imported;
-                    saveData();
+            if (typeof imported === 'object' && imported !== null) {
+                if (confirm('現在の学習進捗が上書きされますがよろしいですか？')) {
+                    localStorage.setItem('vocab_progress', JSON.stringify(imported));
+                    loadOrInitData();
                     initSession();
-                    alert('データをインポートしました');
+                    alert('進捗データをインポートしました');
                 }
             } else {
                 alert('ファイルの形式が正しくありません');
