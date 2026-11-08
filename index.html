@@ -3,45 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>忘却曲線 英単語学習</title>
-    <!-- CSSファイルの読み込み -->
+    <title>忘却曲線 英単語学習（英検7級）</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
 <div class="container">
-    <h1>忘却曲線英単語</h1>
+    <h1>忘却曲線 英単語 <small>英検7級 620語</small></h1>
 
-    <!-- 学習エリア -->
-    <div id="learningArea">
-        <div class="card" onclick="toggleMeaning()">
-            <div class="word-container">
-                <div id="cardWord" class="word">単語がありません</div>
-                <!-- 音声再生用のスピーカーボタン -->
-                <button id="speakBtn" class="btn-audio" onclick="speakCurrentWord(event)" style="display:none;">🔊</button>
+    <nav class="tabs">
+        <button class="tab active" data-tab="learn">学習</button>
+        <button class="tab" data-tab="graph">定着度グラフ</button>
+    </nav>
+
+    <!-- ===== 学習タブ ===== -->
+    <section id="tab-learn">
+        <div class="chips" id="modeChips"></div>
+        <div class="stats" id="learnStats"></div>
+        <div class="card" id="card"></div>
+        <div class="help-text" id="helpText"></div>
+    </section>
+
+    <!-- ===== 定着度グラフタブ ===== -->
+    <section id="tab-graph" hidden>
+        <div class="kpis" id="summary"></div>
+        <div class="stackbar" id="stackbar"></div>
+        <div class="legend" id="legend"></div>
+
+        <div class="filters">
+            <input id="gQuery" type="search" placeholder="単語・意味で検索">
+            <select id="gSort">
+                <option value="Rasc">定着率が低い順</option>
+                <option value="Rdesc">定着率が高い順</option>
+                <option value="due">次の復習が近い順</option>
+                <option value="id">番号順</option>
+            </select>
+        </div>
+        <div class="chips" id="gFilter"></div>
+        <div class="wordlist" id="wordList"></div>
+
+        <details class="note">
+            <summary>定着率の計算方法</summary>
+            <p>エビングハウスの忘却曲線をもとにした簡易モデルです。定着率 R = e<sup>−t / S</sup>（t：最後の学習からの経過時間、S：記憶の強さ）。</p>
+            <ul>
+                <li>1回目の学習直後は S = 24時間（1日後の定着率 約37%）。</li>
+                <li>思い出せた：S がのび、次の復習までの間隔が広がります。早めに思い出せるほど（定着率が低いときに思い出せるほど）よくのびます。</li>
+                <li>忘れた・ヒントを使った・つづりを間違えた：S が半分になります（最小24時間）。</li>
+                <li>定着率が70%を下回った単語が「復習対象」になります。</li>
+            </ul>
+            <p>実際の記憶を測定した値ではなく、目安の推定値です。</p>
+        </details>
+    </section>
+</div>
+
+<!-- ===== 設定・データ ===== -->
+<div class="container plain">
+    <details class="settings">
+        <summary>設定・データ</summary>
+
+        <div class="setting-row">
+            <label>1日の新規単語数
+                <select id="newPerDay">
+                    <option>5</option><option>10</option><option>20</option><option>30</option><option>50</option>
+                </select>
+            </label>
+            <label><input type="checkbox" id="soundOn"> 効果音</label>
+        </div>
+
+        <div class="backup-section">
+            <button class="btn-secondary" id="btnExport">データをエクスポート (保存)</button>
+            <button class="btn-secondary" id="btnImport">インポート</button>
+            <button class="btn-danger" id="btnReset">データをリセット</button>
+            <input type="file" id="importFile" accept=".json,application/json" style="display:none">
+        </div>
+
+        <div class="timebox">
+            <div class="timebox-title">テスト用：時間を進める</div>
+            <div class="timebox-note">忘却曲線の動きを確かめたいときに使います。進めた時間は学習記録にも反映されるので、確認が終わったら「リセット」で戻してください。</div>
+            <div class="timebox-buttons">
+                <button class="btn-secondary" data-skip="1">+1時間</button>
+                <button class="btn-secondary" data-skip="6">+6時間</button>
+                <button class="btn-secondary" data-skip="24">+1日</button>
+                <button class="btn-secondary" data-skip="72">+3日</button>
+                <button class="btn-secondary" data-skip="168">+7日</button>
+                <button class="btn-secondary" data-skip="0">リセット</button>
             </div>
-            <div id="cardMeaning" class="meaning">意味</div>
+            <div class="timebox-now" id="timeNow"></div>
         </div>
-        <div class="btn-group" id="actionButtons" style="display:none;">
-            <button class="btn-danger" onclick="reviewResult(false)">忘れた [←]</button>
-            <button class="btn-success" onclick="reviewResult(true)">覚えている [→]</button>
-        </div>
-        <div class="stats" id="todayCount">本日の復習対象: 0問</div>
-        <div class="help-text">※PCは [Space] で意味表示、[←] [→] キーでも操作できます</div>
+    </details>
+</div>
+
+<!-- ===== 単語ごとの詳細（忘却曲線） ===== -->
+<div id="modal" class="modal" hidden>
+    <div class="modal-box">
+        <button class="modal-close" id="modalClose" aria-label="閉じる">×</button>
+        <div id="modalBody"></div>
     </div>
 </div>
 
-<!-- 元のこの部分を書き換えます -->
-<div class="container" style="background: none; box-shadow: none; padding: 0;">
-    <div class="backup-section">
-        <button class="btn-secondary" onclick="exportData()">データをエクスポート (保存)</button>
-        <button class="btn-secondary" onclick="document.getElementById('importFile').click()">インポート</button>
-        <button class="btn-danger" onclick="resetAllData()" style="background-color: #b91c1c;">データをリセット</button> <!-- ←この行を追加 -->
-        <input type="file" id="importFile" style="display:none" onchange="importData(event)">
-    </div>
-</div>
-
-<!-- JavaScriptファイルの読み込み -->
+<script src="js/words.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
