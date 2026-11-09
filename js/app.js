@@ -311,7 +311,7 @@ let learn = null;        // タイピング学習の進行状況
 let lastBatch = null;    // 直前に覚えた単語
 
 function startSession(items, opts) {
-  session = { queue: items, i: 0, ok: 0, ng: 0, learned: 0, total: items.length, practiceBatch: !!(opts && opts.practiceBatch) };
+  session = { queue: items, i: 0, ok: 0, ng: 0, learned: 0, total: items.length, practiceBatch: !!(opts && opts.practiceBatch), practiceIds: opts && opts.practiceIds, chainRest: (opts && opts.chainRest) || [] };
   screen = 'quiz';
   learn = null;
   setChrome();
@@ -687,7 +687,13 @@ function renderResult() {
 
 function renderDone() {
   if (session.practiceBatch) {
-    return renderChoose(`練習おわり：正解 ${session.ok} / ${session.ok + session.ng}`);
+    const note = `${MODE_LABEL[state.settings.mode]}おわり：正解 ${session.ok} / ${session.ok + session.ng}`;
+    const rest = session.chainRest || [];
+    if (rest.length && session.practiceIds) {
+      const ids = session.practiceIds;
+      return renderMsg(note, `次は「${MODE_LABEL[rest[0]]}」です。`, 'つづける', () => startPractice(ids, rest));
+    }
+    return renderChoose(note);
   }
   const tn = now();
   const { nextDue, nextCount } = nextDueInfo();
@@ -754,7 +760,7 @@ function renderHomeLearn() {
       <div class="home-sub">未学習 ${unl}語 ／ 一度に覚える単語数を選んでください</div>
       ${batchChooserHTML()}
       <button class="btn-success big" id="btnStartLearn" ${unl ? '' : 'disabled'}>${label(state.settings.batchSize)}</button>
-      <div class="home-note">1つの単語を3回続けて打ちます（英語 → 日本語 → 英語）。覚えたあとは、並び替え・ヒント付き・完全タイピングで練習できます。</div>
+      <div class="home-note">1つの単語の英語を3回続けて打ちます。打ち終わったら、続けて「並び替え」→「完全タイピング」で練習します。</div>
     </div>`;
   $('btnStartLearn').onclick = () => startLearn(nextUnlearned(state.settings.batchSize), 'new', []);
   bindBatchInput(v => { $('btnStartLearn').textContent = label(v); });
@@ -777,7 +783,7 @@ function renderHomeReview() {
       <div class="home-sub">一度に覚える単語数</div>
       ${batchChooserHTML()}
       <button class="btn-success big" id="btnStartReviewLearn" ${n ? '' : 'disabled'}>${label(state.settings.batchSize)}</button>
-      <div class="home-note">学習済みの単語は、打ち終わると「再学習」として記録され、定着率が100%に戻ります（記憶の強さは変わりません）。</div>
+      <div class="home-note">学習済みの単語は、打ち終わると「再学習」として記録され、定着率が100%に戻ります（記憶の強さは変わりません）。そのあと、続けて「並び替え」→「完全タイピング」で練習します。</div>
     </div>`;
   $('btnStartReviewLearn').onclick = () => startLearn(categoryIds(cat).slice(0, state.settings.batchSize), cat, []);
   bindBatchInput(v => { $('btnStartReviewLearn').textContent = label(v); });
@@ -823,7 +829,8 @@ function normTyped(v, lang) {
   return Array.from(s.replace(PUNCT_RE, ''));
 }
 
-const COPY_PATTERN = ['en', 'ja', 'en'];   // 1つの単語を打つ順番（3回）。英語→日本語→英語
+const COPY_PATTERN = ['en', 'en', 'en'];   // 1つの単語を打つ順番（3回）。'en'=英語を打つ / 'ja'=日本語を打つ
+const PRACTICE_CHAIN = ['tap', 'type'];    // 打ち終わったあと続けて行う練習：並び替え → 完全タイピング
 
 function startLearn(ids, cat, series) {
   if (!ids.length) return;
@@ -833,8 +840,9 @@ function startLearn(ids, cat, series) {
   setChrome();
   renderMsg(`${ids.length}単語をタイピングで覚えます`,
     `1つの単語を<b>${COPY_PATTERN.length}回</b>続けて打ちます。<br>
-     ${COPY_PATTERN.map((p, i) => `${i + 1}回目：${p === 'en' ? '英語を打つ（英語から日本語）' : '日本語を打つ（日本語から英語）'}`).join('<br>')}<br>
-     間違えた単語は、最後にもう一度（${COPY_PATTERN.length}回）打ちます。`,
+     ${COPY_PATTERN.map((p, i) => `${i + 1}回目：${p === 'en' ? '英語を打つ' : '日本語を打つ'}`).join('<br>')}<br>
+     間違えた単語は、最後にもう一度（${COPY_PATTERN.length}回）打ちます。<br>
+     打ち終わったら、続けて「${PRACTICE_CHAIN.map(m => MODE_LABEL[m]).join('」→「')}」で練習します。`,
     'はじめる', nextLearnItem);
 }
 
@@ -870,7 +878,18 @@ function nextLearnItem() {
 function finishLearn() {
   learn.ids.forEach(id => { if (!state.learned[id]) learnNew(id); else restudy(id); });
   lastBatch = { ids: learn.ids.slice(), cat: learn.cat, series: learn.series.concat(learn.ids) };
-  renderChoose();
+  const ids = lastBatch.ids;
+  renderMsg(`${ids.length}単語を打ち終わりました 🎉`,
+    `続けて「${PRACTICE_CHAIN.map(m => MODE_LABEL[m]).join('」→「')}」で練習します。<br>（練習の結果は記録されません）`,
+    'つづける', () => startPractice(ids, PRACTICE_CHAIN));
+}
+
+// 覚えた単語の練習。modes の順に、続けて行う
+function startPractice(ids, modes) {
+  state.settings.mode = modes[0];
+  saveState();
+  startSession(ids.map(id => ({ id, kind: 'review', practice: true })),
+    { practiceBatch: true, practiceIds: ids, chainRest: modes.slice(1) });
 }
 
 function renderCopy() {
@@ -1035,9 +1054,7 @@ function renderChoose(note) {
   $('chNext').onclick = () => startLearn(nextIds, cat, lastBatch.series);
   $('chHome').onclick = renderHome;
   cardEl.querySelectorAll('[data-practice]').forEach(b => b.onclick = () => {
-    state.settings.mode = b.dataset.practice;
-    saveState();
-    startSession(ids.map(id => ({ id, kind: 'review', practice: true })), { practiceBatch: true });
+    startPractice(ids, [b.dataset.practice]);
   });
 }
 
