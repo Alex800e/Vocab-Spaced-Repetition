@@ -4,12 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>忘却曲線 英単語学習（英検7級）</title>
-    <link rel="stylesheet" href="css/style.css?v=5">
+    <link rel="stylesheet" href="css/style.css?v=6">
 </head>
 <body>
 
 <div class="container">
-    <h1>忘却曲線 英単語 <small>英検7級 620語</small> <small class="ver">v5</small></h1>
+    <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v6</small></h1>
 
     <nav class="tabs">
         <button class="tab active" data-tab="learn">学習</button>
@@ -17,6 +17,12 @@
         <button class="tab" data-tab="test">忘却テスト</button>
         <button class="tab" data-tab="graph">定着度グラフ</button>
     </nav>
+
+    <!-- 学習する範囲（級・テーマ） -->
+    <div class="scope" id="scopeBar">
+        <label>級 <select id="scopeLevel"></select></label>
+        <label>テーマ <select id="scopeTheme"></select></label>
+    </div>
 
     <!-- ===== 学習タブ ===== -->
     <section id="tab-learn">
@@ -102,7 +108,17 @@
     </div>
 </div>
 
-<script src="js/words.js?v=5"></script>
-<script src="js/app.js?v=5"></script>
+<script>var WORDS_LV = {};</script>
+<script src="js/data/words_7.js?v=6"></script>
+<script src="js/data/words_6.js?v=6"></script>
+<script src="js/data/words_5.js?v=6"></script>
+<script src="js/data/words_4.js?v=6"></script>
+<script src="js/data/words_3.js?v=6"></script>
+<script src="js/data/words_p2.js?v=6"></script>
+<script src="js/data/words_2.js?v=6"></script>
+<script src="js/data/words_p1.js?v=6"></script>
+<script src="js/data/words_1.js?v=6"></script>
+<script src="js/data/legacy.js?v=6"></script>
+<script src="js/app.js?v=6"></script>
 </body>
 </html>
