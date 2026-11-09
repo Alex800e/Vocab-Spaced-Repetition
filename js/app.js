@@ -61,7 +61,7 @@ function dateKey(t) {
 function defaultState() {
   return {
     learned: {},                                   // id -> {first, last, S, reviews:[{t, ok, R, S0, S1, mode, hint}]}
-    settings: { mode: 'tap', newPerDay: 10, sound: true },
+    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true },
     offsetMs: 0,                                   // テスト用の仮想時間
     daily: { date: '', count: 0 }                  // 今日の新規学習数
   };
@@ -211,17 +211,36 @@ function buildQueue() {
     if (R <= THRESH) due.push({ id, kind: 'review', R });
   });
   due.sort((a, b) => a.R - b.R);
-  const remain = Math.max(0, state.settings.newPerDay - todayNewCount());
-  const news = [];
-  for (const w of WORDS) {
-    if (news.length >= remain) break;
-    if (!state.learned[w.id]) news.push({ id: w.id, kind: 'new' });
-  }
-  return due.concat(news);
+  return due;
 }
 
-function startSession(items) {
-  session = { queue: items, i: 0, ok: 0, ng: 0, learned: 0, total: items.length };
+function nextUnlearned(n) {
+  return WORDS.filter(w => !state.learned[w.id]).slice(0, n).map(w => w.id);
+}
+
+function nextDueInfo() {
+  const tn = now();
+  let nextDue = Infinity, nextCount = 0;
+  Object.keys(state.learned).forEach(k => {
+    const d = dueTime(state.learned[k]);
+    if (d > tn) {
+      if (d < nextDue - 60000) { nextDue = d; nextCount = 1; }
+      else if (d <= nextDue + 60000) nextCount++;
+    }
+  });
+  return { nextDue, nextCount };
+}
+
+// 画面: 'home' | 'learn'(タイピングで覚える) | 'quiz'(復習・練習) | 'choose'(覚えた後の選択)
+let screen = 'home';
+let learn = null;        // タイピング学習の進行状況
+let lastBatch = null;    // 直前に覚えた単語
+
+function startSession(items, opts) {
+  session = { queue: items, i: 0, ok: 0, ng: 0, learned: 0, total: items.length, practiceBatch: !!(opts && opts.practiceBatch) };
+  screen = 'quiz';
+  learn = null;
+  setChrome();
   showItem();
 }
 
@@ -236,7 +255,8 @@ function showItem() {
   cur = {
     item: it,
     word: BY_ID[it.id],
-    phase: it.kind === 'new' ? 'intro' : 'q',
+    phase: 'q',
+    practice: !!it.practice,
     mistake: false, hint: false, assist: false, ok: null, info: null,
     revealed: false
   };
@@ -253,9 +273,22 @@ function updateLearnStats() {
   let due = 0;
   Object.keys(state.learned).forEach(k => { if (retention(state.learned[k], tn) <= THRESH) due++; });
   const learnedN = Object.keys(state.learned).length;
-  const newLeft = Math.max(0, state.settings.newPerDay - todayNewCount());
-  const prog = session.total ? `　進行 ${Math.min(session.i + 1, session.total)} / ${session.total}` : '';
-  $('learnStats').textContent = `復習対象 ${due}語 ／ 今日の新規 あと${newLeft}語 ／ 学習済み ${learnedN} / ${WORDS.length}語${prog}`;
+  let prog = '';
+  if (screen === 'quiz' && session.total) prog = `　進行 ${Math.min(session.i + 1, session.total)} / ${session.total}`;
+  if (screen === 'learn' && learn) prog = `　${learn.stage === 'en' ? 'ステップ1/2' : 'ステップ2/2'}　${Math.min(learn.idx + 1, learn.queue.length)} / ${learn.queue.length}${learn.retry ? '（やり直し）' : ''}`;
+  $('learnStats').textContent = `復習対象 ${due}語 ／ 学習済み ${learnedN} / ${WORDS.length}語${prog}`;
+}
+
+// 画面ごとの表示切り替え
+function setChrome() {
+  $('modeChips').hidden = screen !== 'quiz';
+  $('helpText').hidden = screen !== 'quiz';
+  $('backHome').hidden = screen === 'home';
+  cardEl.className = 'card' + (screen === 'home' ? ' home-card' : '');
+  if (screen !== 'learn') $('typeArea').innerHTML = '';
+  renderModeChips();
+  renderHelp();
+  updateLearnStats();
 }
 
 function renderModeChips() {
@@ -274,7 +307,8 @@ function renderHelp() {
 // ---------- カード描画の振り分け ----------
 function renderCard() {
   if (!cur) return;
-  if (cur.phase === 'intro') return renderIntro();
+  if (cur.copy) return renderCopy();
+  $('typeArea').innerHTML = '';
   if (cur.phase === 'result') return renderResult();
   const m = state.settings.mode;
   if (m === 'card') return renderQCard();
@@ -284,23 +318,6 @@ function renderCard() {
 
 function tagLine(w, extra) {
   return `<div class="tag-line"><span class="tag">${esc(w.pos)}</span>${extra || ''}</div>`;
-}
-
-// ---------- 新しい単語（1回目の学習） ----------
-function renderIntro() {
-  const w = cur.word;
-  cardEl.innerHTML = `
-    <div class="tag-line"><span class="tag new">新しい単語</span><span class="tag">${esc(w.pos)}</span></div>
-    <div class="word-container">
-      <div class="word">${esc(layoutOf(w.en))}</div>
-      <button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button>
-    </div>
-    <div class="meaning-big">${esc(w.ja)}</div>
-    <div class="intro-note">声に出して読んで、意味といっしょに覚えましょう。<br>覚えたら記録します（ここが1回目の学習です）。</div>
-    <div class="btn-group"><button class="btn-success" id="btnLearned">覚えた！学習を記録する [Enter]</button></div>`;
-  $('btnSpeak').onclick = () => speakEn(w);
-  $('btnLearned').onclick = () => { learnNew(w.id); session.learned++; goNext(); };
-  autoSpeak(w);
 }
 
 // ---------- カードモード ----------
@@ -334,18 +351,21 @@ function revealCard() {
 }
 function cardAnswer(ok) {
   if (!cur || cur.phase !== 'q' || !cur.revealed) return;
-  applyReview(cur.word.id, ok, 'card', false);
-  ok ? session.ok++ : session.ng++;
+  if (!cur.practice) {
+    applyReview(cur.word.id, ok, 'card', false);
+    ok ? session.ok++ : session.ng++;
+  }
   goNext();
 }
 
 // ---------- 共通：スロット(1文字ずつのボックス)表示 ----------
 // getInfo(li, ch) -> {cls, ch}   li: アルファベットの通し番号
-function slotsHTML(layout, getInfo) {
+function slotsHTML(layout, getInfo, isSlot) {
+  const test = isSlot || (c => /[A-Za-z]/.test(c));
   let li = 0;
   let html = '';
   for (const ch of layout) {
-    if (/[A-Za-z]/.test(ch)) {
+    if (test(ch)) {
       const info = getInfo(li, ch);
       html += `<span class="slot ${info.cls}">${esc(info.ch || '')}</span>`;
       li++;
@@ -556,8 +576,10 @@ function tapKey(i, btn) {
 function finishQuestion(ok) {
   cur.phase = 'result';
   cur.ok = ok;
-  cur.info = applyReview(cur.word.id, ok, state.settings.mode, cur.hint);
-  ok ? session.ok++ : session.ng++;
+  if (!cur.practice) {
+    cur.info = applyReview(cur.word.id, ok, state.settings.mode, cur.hint);
+    ok ? session.ok++ : session.ng++;
+  }
   updateLearnStats();
   renderResult();
   autoSpeak(cur.word);
@@ -566,7 +588,7 @@ function finishQuestion(ok) {
 function renderResult() {
   const w = cur.word;
   const info = cur.info;
-  let detail = '';
+  let detail = cur.practice ? '確認問題でした（この結果は記録されません）。<br>次の復習は、時間がたってから出題されます。' : '';
   if (info) {
     const dueTxt = info.due - info.t <= 0 ? 'すぐ' : fmtDur(info.due - info.t) + '後';
     detail = `思い出した時の定着率 <b>${pct(info.R)}%</b><br>
@@ -590,30 +612,305 @@ function renderResult() {
 }
 
 function renderDone() {
+  if (session.practiceBatch) {
+    return renderChoose(`練習おわり：正解 ${session.ok} / ${session.ok + session.ng}`);
+  }
   const tn = now();
-  let nextDue = Infinity, nextCount = 0;
-  Object.keys(state.learned).forEach(k => {
-    const d = dueTime(state.learned[k]);
-    if (d > tn) {
-      if (d < nextDue - 60000) { nextDue = d; nextCount = 1; }
-      else if (d <= nextDue + 60000) nextCount++;
-    }
-  });
+  const { nextDue, nextCount } = nextDueInfo();
   const sum = session.ok + session.ng;
-  const newLeft = Math.max(0, state.settings.newPerDay - todayNewCount());
   cardEl.innerHTML = `
-    <div class="done-title">今回の学習はおしまいです 🎉</div>
-    ${sum || session.learned ? `<div class="result-info">新しく学習：<b>${session.learned}語</b>　復習：<b>${sum}問</b>（正解 ${session.ok} / 不正解 ${session.ng}）</div>` : ''}
+    <div class="done-title">今回の復習はおしまいです 🎉</div>
+    ${sum ? `<div class="result-info">復習：<b>${sum}問</b>（正解 ${session.ok} / 不正解 ${session.ng}）</div>` : ''}
     <div class="result-info">${nextDue < Infinity
       ? `次の復習：<b>${fmtDur(nextDue - tn)}後</b>（${fmtDate(nextDue)}ごろ、約${nextCount}語）`
-      : 'まだ学習した単語がありません。'}
-      ${newLeft === 0 ? '<br>今日の新規単語は上限に達しました（設定で変更できます）。' : ''}</div>
+      : 'まだ学習した単語がありません。'}</div>
     <div class="btn-group">
       <button class="btn-secondary" id="btnToGraph">定着度グラフを見る</button>
-      <button class="btn-primary" id="btnAgain">もう一度確認する</button>
+      <button class="btn-primary" id="btnHome2">ホームへ</button>
     </div>`;
   $('btnToGraph').onclick = () => switchTab('graph');
-  $('btnAgain').onclick = () => startSession(buildQueue());
+  $('btnHome2').onclick = renderHome;
+}
+
+// ==========================================
+// ホーム画面
+// ==========================================
+const BATCH_PRESETS = [5, 10, 20];
+
+function renderHome() {
+  screen = 'home';
+  cur = null;
+  learn = null;
+  setChrome();
+  const tn = now();
+  const unl = WORDS.filter(w => !state.learned[w.id]).length;
+  const dueN = buildQueue().length;
+  const { nextDue, nextCount } = nextDueInfo();
+  const bs = state.settings.batchSize;
+  const isCustom = BATCH_PRESETS.indexOf(bs) < 0;
+  const n = Math.min(bs, unl);
+  cardEl.innerHTML = `
+    <div class="home-sec">
+      <h3>新しい単語を覚える（タイピング）</h3>
+      <div class="home-sub">未学習 ${unl}語 ／ 一度に覚える単語数を選んでください</div>
+      <div class="chips">
+        ${BATCH_PRESETS.map(p => `<button class="chip${bs === p ? ' on' : ''}" data-batch="${p}">${p}単語</button>`).join('')}
+        <span class="custom-box${isCustom ? ' on' : ''}">カスタム
+          <input type="number" id="customN" min="1" max="100" value="${isCustom ? bs : ''}" placeholder="1〜100"> 単語</span>
+      </div>
+      <button class="btn-success big" id="btnStartLearn" ${unl ? '' : 'disabled'}>${unl ? `${n}単語を覚える` : '全単語を学習済みです'}</button>
+      <div class="home-note">英語を見ながら英語を打つ → 日本語を見ながら日本語を打つ。間違えずに打てたら、並び替え・ヒント付き・完全タイピングで練習できます。</div>
+    </div>
+    <div class="home-sec">
+      <h3>復習する</h3>
+      <div class="home-sub">復習対象 <b>${dueN}語</b>${nextDue < Infinity && !dueN ? `／次の復習は${fmtDur(nextDue - tn)}後（約${nextCount}語）` : ''}</div>
+      <div class="chips" id="homeModes">
+        ${MODES.map(m => `<button class="chip${state.settings.mode === m.key ? ' on' : ''}" data-mode="${m.key}">${m.label}</button>`).join('')}
+      </div>
+      <button class="btn-primary big" id="btnStartReview" ${dueN ? '' : 'disabled'}>${dueN ? `${dueN}語を復習する` : '復習する単語はありません'}</button>
+    </div>`;
+  $('btnStartLearn').onclick = () => startLearn(nextUnlearned(state.settings.batchSize));
+  $('btnStartReview').onclick = () => startSession(buildQueue());
+  const ci = $('customN');
+  ci.addEventListener('input', () => {
+    const v = Math.max(1, Math.min(100, parseInt(ci.value, 10) || 0));
+    if (!v) return;
+    state.settings.batchSize = v;
+    saveState();
+    document.querySelectorAll('[data-batch]').forEach(b => b.classList.toggle('on', Number(b.dataset.batch) === v));
+    ci.parentElement.classList.toggle('on', BATCH_PRESETS.indexOf(v) < 0);
+    const u = WORDS.filter(w => !state.learned[w.id]).length;
+    $('btnStartLearn').textContent = u ? `${Math.min(v, u)}単語を覚える` : '全単語を学習済みです';
+  });
+}
+
+// ==========================================
+// タイピングで覚える（英語を打つ → 日本語を打つ）
+// ==========================================
+const PUNCT_RE = /[\s，、,.。・【】\[\]()（）「」『』〜~…‥!?！？:：;；'"“”‘’\/／\-]/g;
+const isJaSlot = ch => ch.normalize('NFKC').replace(PUNCT_RE, '') !== '';
+const isIdeo = ch => /[\u3400-\u9FFF\uF900-\uFAFF]/.test(ch);
+const isKana = ch => /[\u3041-\u3096\u30A1-\u30FA]/.test(ch);
+
+function jaFirst(w) {
+  const first = w.ja.split(/[，,、]/)[0].trim();
+  return first || w.ja;
+}
+function jaTarget(w) { return state.settings.jaFirstOnly ? jaFirst(w) : w.ja; }
+
+function normTyped(v, lang) {
+  const s = v.normalize('NFKC');
+  if (lang === 'en') return Array.from(s.toLowerCase().replace(/[^a-z]/g, ''));
+  return Array.from(s.replace(PUNCT_RE, ''));
+}
+
+function startLearn(ids) {
+  if (!ids.length) return;
+  learn = { ids: ids.slice(), stage: 'en', queue: ids.slice(), idx: 0, missed: [], retry: false };
+  screen = 'learn';
+  session = { queue: [], i: 0, ok: 0, ng: 0, learned: 0, total: 0 };
+  setChrome();
+  renderMsg(`${ids.length}単語をタイピングで覚えます`,
+    'ステップ1（英語から日本語）：カードを見ながら<b>英語</b>を打ちます。<br>ステップ2（日本語から英語）：カードを見ながら<b>日本語</b>を打ちます。<br>間違えた単語は、最後にもう一度打ちます。',
+    'はじめる', nextLearnItem);
+}
+
+function renderMsg(title, body, btn, onNext) {
+  cur = { phase: 'msg', onNext };
+  $('typeArea').innerHTML = '';
+  cardEl.innerHTML = `
+    <div class="done-title">${title}</div>
+    <div class="result-info">${body}</div>
+    <div class="btn-group"><button class="btn-primary" id="btnMsg">${btn} [Enter]</button></div>`;
+  $('btnMsg').onclick = onNext;
+}
+
+function nextLearnItem() {
+  updateLearnStats();
+  if (learn.idx >= learn.queue.length) {
+    if (learn.missed.length) {
+      const n = learn.missed.length;
+      learn.queue = learn.missed.slice();
+      learn.missed = [];
+      learn.idx = 0;
+      learn.retry = true;
+      return renderMsg('間違えた単語をもう一度', `間違えた${n}語を、間違えずに打てるまで繰り返します。`, 'つづける', nextLearnItem);
+    }
+    if (learn.stage === 'en') {
+      learn.stage = 'ja';
+      learn.queue = learn.ids.slice();
+      learn.idx = 0;
+      learn.retry = false;
+      return renderMsg('ステップ1クリア！', '次は、カードを見ながら<b>日本語</b>を打ちます。<br>日本語入力（IME）をオンにして、変換したら Enter で確定してください。', 'つづける', nextLearnItem);
+    }
+    return finishLearn();
+  }
+  const id = learn.queue[learn.idx];
+  cur = { phase: 'q', copy: learn.stage, word: BY_ID[id], mistake: false, completed: false, composing: false, compStart: 0 };
+  renderCard();
+}
+
+function finishLearn() {
+  learn.ids.forEach(id => { if (!state.learned[id]) learnNew(id); });
+  lastBatch = { ids: learn.ids.slice() };
+  renderChoose();
+}
+
+function renderCopy() {
+  const w = cur.word, lang = cur.copy;
+  cur.layout = lang === 'en' ? layoutOf(w.en) : jaTarget(w);
+  cur.isSlot = lang === 'en' ? (c => /[A-Za-z]/.test(c)) : isJaSlot;
+  cur.tchars = lang === 'en'
+    ? lettersOf(w.en).split('')
+    : Array.from(cur.layout).filter(isJaSlot).map(c => c.normalize('NFKC'));
+  cur.validLen = 0; cur.wrongIdx = -1; cur.wrongChar = ''; cur.comp = []; cur.compBad = false;
+
+  const first = jaFirst(w);
+  const restJa = w.ja.slice(first.length);
+  const jaHtml = state.settings.jaFirstOnly && lang === 'ja' && restJa
+    ? `<span class="hl">${esc(first)}</span><span class="dim">${esc(restJa)}</span>`
+    : esc(w.ja);
+  const stageTxt = lang === 'en' ? '英語から日本語（英語を打つ）' : '日本語から英語（日本語を打つ）';
+
+  cardEl.innerHTML = `
+    <div class="tag-line"><span class="tag new">${stageTxt}</span>${learn.retry ? '<span class="tag soft">やり直し</span>' : ''}</div>
+    <div class="info-rows">
+      <div class="irow"><span class="il">品詞</span><span class="iv">${esc(w.pos)}</span></div>
+      <div class="irow"><span class="il">英語</span><span class="iv en${lang === 'en' ? ' target' : ''}">${esc(layoutOf(w.en))}<button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button></span></div>
+      <div class="irow"><span class="il">日本語</span><span class="iv ja${lang === 'ja' ? ' target' : ''}">${jaHtml}</span></div>
+    </div>`;
+  $('btnSpeak').onclick = () => speakEn(w);
+
+  $('typeArea').innerHTML = `
+    <div class="type-label">${lang === 'en' ? '↑ 上の英語を打ってください' : '↑ 上の日本語を打ってください（日本語入力をオンにして、変換したら Enter で確定）'}</div>
+    <div class="slots" id="slots"></div>
+    <input id="typeInput" class="type-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${lang === 'en' ? 'ここに入力' : 'ここに入力（日本語）'}">
+    <div class="msg" id="msg"></div>`;
+  const inp = $('typeInput');
+  inp.addEventListener('compositionstart', () => { cur.composing = true; cur.compStart = inp.value.length; });
+  inp.addEventListener('compositionend', () => { cur.composing = false; processCopy(); });
+  inp.addEventListener('input', processCopy);
+  $('slots').onclick = () => inp.focus();
+  updateCopy();
+  setTimeout(() => inp.focus(), 0);
+}
+
+function processCopy() {
+  if (!cur || !cur.copy || cur.completed) return;
+  const inp = $('typeInput');
+  const lang = cur.copy;
+  const T = cur.tchars;
+  const raw = inp.value;
+  let committedRaw = raw, compRaw = '';
+  if (cur.composing && lang === 'ja') {
+    committedRaw = raw.slice(0, cur.compStart);
+    compRaw = raw.slice(cur.compStart);
+  }
+  const C = normTyped(committedRaw, lang);
+  let lcp = 0;
+  while (lcp < C.length && lcp < T.length && C[lcp] === T[lcp]) lcp++;
+
+  if (lcp < C.length) {
+    // 間違えた文字を赤く震わせ、バックスペースで消すまで先へ進めない
+    inp.value = C.slice(0, lcp + 1).join('');
+    cur.validLen = lcp;
+    cur.wrongIdx = lcp;
+    cur.wrongChar = C[lcp];
+    cur.comp = []; cur.compBad = false;
+    if (!cur.mistake) beep(180, 0.18);
+    cur.mistake = true;
+    updateCopy();
+    return;
+  }
+
+  cur.wrongIdx = -1;
+  cur.validLen = C.length;
+  cur.comp = []; cur.compBad = false;
+  if (compRaw) {
+    // 変換前（ひらがな）が、答えのひらがなと合っているかだけ確認する。漢字の部分は確定後に判定
+    const P = normTyped(compRaw, 'ja');
+    cur.comp = P;
+    const seg = T.slice(C.length, C.length + P.length);
+    if (!seg.some(isIdeo)) {
+      for (let i = 0; i < P.length; i++) {
+        if (!isKana(P[i])) break;
+        if (P[i] !== seg[i]) { cur.compBad = true; break; }
+      }
+    }
+    if (cur.compBad) {
+      if (!cur.mistake) beep(180, 0.18);
+      cur.mistake = true;
+    }
+  }
+  updateCopy();
+
+  if (!cur.composing && C.length === T.length) { completeCopy(); return; }
+  if (cur.validLen > (cur.lastValid || 0)) beep(520 + Math.min(cur.validLen, 12) * 30, 0.05);
+  cur.lastValid = cur.validLen;
+}
+
+function updateCopy() {
+  $('slots').innerHTML = slotsHTML(cur.layout, (li, ch) => {
+    if (li < cur.validLen) return { cls: 'ok', ch };
+    if (li === cur.wrongIdx) return { cls: 'bad', ch: cur.wrongChar };
+    const ci = li - cur.validLen;
+    if (cur.wrongIdx < 0 && ci < cur.comp.length) return { cls: cur.compBad ? 'bad' : 'comp', ch: cur.comp[ci] };
+    const isNext = li === cur.validLen && cur.wrongIdx < 0 && !cur.comp.length;
+    return { cls: 'ghost' + (isNext ? ' next' : ''), ch };
+  }, cur.isSlot);
+  const msg = $('msg');
+  if (cur.completed) { msg.className = 'msg good'; msg.textContent = 'OK！'; }
+  else if (cur.wrongIdx >= 0 || cur.compBad) { msg.className = 'msg bad'; msg.textContent = '間違えました。バックスペース(⌫)で消して打ち直してください'; }
+  else { msg.className = 'msg'; msg.textContent = ''; }
+}
+
+function completeCopy() {
+  if (cur.completed) return;
+  cur.completed = true;
+  const me = cur;
+  const inp = $('typeInput');
+  inp.blur();
+  inp.disabled = true;
+  updateCopy();
+  beep(880, 0.12);
+  autoSpeak(me.word);
+  if (me.mistake && learn.missed.indexOf(me.word.id) < 0) learn.missed.push(me.word.id);
+  setTimeout(() => {
+    if (cur !== me || !learn) return;
+    learn.idx++;
+    nextLearnItem();
+  }, 750);
+}
+
+// ---------- 覚えた後の選択画面 ----------
+function renderChoose(note) {
+  screen = 'choose';
+  cur = null;
+  setChrome();
+  const ids = lastBatch ? lastBatch.ids : [];
+  const size = state.settings.batchSize;
+  const unl = WORDS.filter(w => !state.learned[w.id]).length;
+  const nextN = Math.min(size, unl);
+  cardEl.innerHTML = `
+    <div class="done-title">${ids.length}単語を覚えました 🎉</div>
+    <div class="result-info">${note ? esc(note) + '<br>' : ''}1回目の学習を記録しました。次の復習は約${fmtDur(-Math.log(THRESH) * S0 * H)}後が目安です。</div>
+    <div class="choose">
+      <button class="btn-success big" id="chNext" ${unl ? '' : 'disabled'}>${unl ? `次の${nextN}単語を覚える` : '未学習の単語はありません'}</button>
+      <div class="choose-title">この${ids.length}単語を練習する（練習の結果は記録されません）</div>
+      <div class="btn-group">
+        <button class="btn-secondary" data-practice="tap">並び替え</button>
+        <button class="btn-secondary" data-practice="hint">最初の文字ヒント＋タイピング</button>
+        <button class="btn-secondary" data-practice="type">完全タイピング</button>
+      </div>
+      <button class="btn-link" id="chHome">ホームへ</button>
+    </div>`;
+  $('chNext').onclick = () => startLearn(nextUnlearned(state.settings.batchSize));
+  $('chHome').onclick = renderHome;
+  cardEl.querySelectorAll('[data-practice]').forEach(b => b.onclick = () => {
+    state.settings.mode = b.dataset.practice;
+    saveState();
+    startSession(ids.map(id => ({ id, kind: 'review', practice: true })), { practiceBatch: true });
+  });
 }
 
 // ==========================================
@@ -820,7 +1117,7 @@ function renderDetail() {
       <div class="d-empty">この単語はまだ学習していません。<br>学習すると、ここに忘却曲線が表示されます。</div>
       <div class="btn-group"><button class="btn-primary" id="dStudy">今すぐ学習する</button></div>`;
     $('dSpeak').onclick = () => speakEn(w);
-    $('dStudy').onclick = () => { closeDetail(); switchTab('learn'); startSession([{ id: w.id, kind: 'new' }]); };
+    $('dStudy').onclick = () => { closeDetail(); switchTab('learn'); startLearn([w.id]); };
     return;
   }
 
@@ -878,8 +1175,7 @@ function switchTab(name) {
   if (name === 'graph') renderGraphTab();
   if (name === 'learn') {
     updateLearnStats();
-    // 学習が完了画面なら最新の状態で作り直す
-    if (!cur) startSession(buildQueue());
+    if (screen === 'home') renderHome();
   }
 }
 
@@ -932,12 +1228,10 @@ function resetAll() {
 }
 
 function refreshAll() {
-  $('newPerDay').value = String(state.settings.newPerDay);
+  $('jaFirst').checked = !!state.settings.jaFirstOnly;
   $('soundOn').checked = !!state.settings.sound;
-  renderModeChips();
-  renderHelp();
   renderTimeNow();
-  startSession(buildQueue());
+  renderHome();
   if (!$('tab-graph').hidden) renderGraphTab();
 }
 
@@ -946,18 +1240,32 @@ function refreshAll() {
 // ==========================================
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 
-$('modeChips').addEventListener('click', ev => {
+document.addEventListener('click', ev => {
   const b = ev.target.closest('button[data-mode]');
-  if (!b) return;
-  state.settings.mode = b.dataset.mode;
-  saveState();
-  renderModeChips();
-  renderHelp();
-  if (cur && cur.phase === 'q') {
-    // 出題形式を変えたら、いまの問題を新しい形式でやり直す
-    cur.mistake = false; cur.hint = false; cur.assist = false; cur.revealed = false;
-    renderCard();
+  if (b) {
+    state.settings.mode = b.dataset.mode;
+    saveState();
+    renderModeChips();
+    renderHelp();
+    if (screen === 'home') renderHome();
+    else if (screen === 'quiz' && cur && cur.phase === 'q') {
+      // 出題形式を変えたら、いまの問題を新しい形式でやり直す
+      cur.mistake = false; cur.hint = false; cur.assist = false; cur.revealed = false;
+      renderCard();
+    }
+    return;
   }
+  const g = ev.target.closest('button[data-batch]');
+  if (g) {
+    state.settings.batchSize = Number(g.dataset.batch);
+    saveState();
+    if (screen === 'home') renderHome();
+  }
+});
+
+$('backHome').addEventListener('click', () => {
+  if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。ホームに戻りますか？')) return;
+  renderHome();
 });
 
 $('gFilter').addEventListener('click', ev => {
@@ -980,10 +1288,9 @@ $('modalBody').addEventListener('click', ev => {
   if (b) { detailRange = b.dataset.range; renderDetail(); }
 });
 
-$('newPerDay').addEventListener('change', ev => {
-  state.settings.newPerDay = Number(ev.target.value);
+$('jaFirst').addEventListener('change', ev => {
+  state.settings.jaFirstOnly = ev.target.checked;
   saveState();
-  updateLearnStats();
 });
 $('soundOn').addEventListener('change', ev => { state.settings.sound = ev.target.checked; saveState(); });
 $('btnExport').addEventListener('click', exportData);
@@ -998,7 +1305,7 @@ document.querySelectorAll('[data-skip]').forEach(b => b.addEventListener('click'
   renderTimeNow();
   updateLearnStats();
   if (!$('tab-graph').hidden) renderGraphTab();
-  if (!cur) startSession(buildQueue());
+  if (screen === 'home') renderHome();
 }));
 
 // キーボード操作
@@ -1009,13 +1316,13 @@ document.addEventListener('keydown', ev => {
   }
   if ($('tab-learn').hidden || !cur) return;
   const tag = document.activeElement && document.activeElement.tagName;
-  if (cur.phase === 'intro' && ev.key === 'Enter') {
+  if (cur.phase === 'msg' && ev.key === 'Enter') {
     ev.preventDefault();
-    learnNew(cur.word.id); session.learned++; goNext();
+    cur.onNext();
   } else if (cur.phase === 'result' && ev.key === 'Enter') {
     ev.preventDefault();
     goNext();
-  } else if (cur.phase === 'q' && state.settings.mode === 'card' && tag !== 'INPUT' && tag !== 'SELECT') {
+  } else if (cur.phase === 'q' && !cur.copy && state.settings.mode === 'card' && tag !== 'INPUT' && tag !== 'SELECT') {
     if (ev.code === 'Space') { ev.preventDefault(); revealCard(); }
     else if (ev.code === 'ArrowLeft') cardAnswer(false);
     else if (ev.code === 'ArrowRight') cardAnswer(true);
