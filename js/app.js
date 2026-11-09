@@ -17,6 +17,7 @@ const MODES = [
 ];
 const MODE_LABEL = {};
 MODES.forEach(m => MODE_LABEL[m.key] = m.label);
+MODE_LABEL.copy = 'タイピング学習';
 
 const BY_ID = {};
 WORDS.forEach(w => BY_ID[w.id] = w);
@@ -37,6 +38,40 @@ const layoutOf = en => en.replace(/\s*\.\.\.\s*$/, '').replace(/’/g, "'").trim
 const pad = n => String(n).padStart(2, '0');
 const pct = r => Math.round(r * 100);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---------- ふりがな（漢字の上に小さくグレーで表示） ----------
+// words.js の rb は「{漢字|よみ}」形式。読み込んで区間ごとに分ける
+const rbCache = {};
+function rbSegs(w) {
+  if (rbCache[w.id]) return rbCache[w.id];
+  const src = w.rb || w.ja;
+  const segs = [];
+  let pos = 0, last = 0, m;
+  const re = /\{([^|}]+)\|([^}]+)\}/g;
+  const push = (t, r) => { segs.push({ t, r, a: pos, b: pos + t.length }); pos += t.length; };
+  while ((m = re.exec(src))) {
+    if (m.index > last) push(src.slice(last, m.index), '');
+    push(m[1], m[2]);
+    last = re.lastIndex;
+  }
+  if (last < src.length) push(src.slice(last), '');
+  return (rbCache[w.id] = segs);
+}
+// ja の [from, to) の範囲をふりがな付きHTMLにする
+function rubyHTML(w, from, to) {
+  const f = from || 0, t = to == null ? w.ja.length : to;
+  let html = '';
+  rbSegs(w).forEach(seg => {
+    if (seg.b <= f || seg.a >= t) return;
+    if (seg.r && seg.a >= f && seg.b <= t) {
+      html += `<ruby>${esc(seg.t)}<rt>${esc(seg.r)}</rt></ruby>`;
+    } else {
+      html += esc(seg.t.slice(Math.max(f, seg.a) - seg.a, Math.min(t, seg.b) - seg.a));
+    }
+  });
+  return html;
+}
+const jaHTML = w => rubyHTML(w, 0, w.ja.length);
 
 function fmtDate(t) {
   const d = new Date(t);
@@ -61,7 +96,7 @@ function dateKey(t) {
 function defaultState() {
   return {
     learned: {},                                   // id -> {first, last, S, reviews:[{t, ok, R, S0, S1, mode, hint}]}
-    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true },
+    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low' },
     offsetMs: 0,                                   // テスト用の仮想時間
     daily: { date: '', count: 0 }                  // 今日の新規学習数
   };
@@ -103,6 +138,17 @@ function learnNew(id) {
   const key = dateKey(t);
   if (state.daily.date !== key) state.daily = { date: key, count: 0 };
   state.daily.count++;
+  saveState();
+}
+
+// 再学習（タイピングで打ち直した）: 定着率を100%に戻す。記憶の強さSは変えない
+function restudy(id) {
+  const rec = state.learned[id];
+  if (!rec) return;
+  const t = now();
+  const R = retention(rec, t);
+  rec.reviews.push({ t, ok: true, R, S0: rec.S, S1: rec.S, mode: 'copy', hint: false, restudy: true });
+  rec.last = t;
   saveState();
 }
 
@@ -214,6 +260,34 @@ function buildQueue() {
   return due;
 }
 
+const CATS = [
+  { key: 'new',  label: '未学習' },
+  { key: 'low',  label: '50%未満' },
+  { key: 'mid',  label: '50〜80%' },
+  { key: 'high', label: '80%以上' }
+];
+const CAT_LABEL = {};
+CATS.forEach(c => CAT_LABEL[c.key] = c.label);
+
+// 区分に入る単語の番号。未学習は番号順、学習済みは定着率の低い順
+function categoryIds(cat, exclude) {
+  const tn = now();
+  const ex = {};
+  (exclude || []).forEach(i => ex[i] = true);
+  const rows = [];
+  WORDS.forEach(w => {
+    if (ex[w.id]) return;
+    const rec = state.learned[w.id];
+    if (cat === 'new') { if (!rec) rows.push({ id: w.id, R: -1 }); return; }
+    if (!rec) return;
+    const R = retention(rec, tn);
+    const hit = cat === 'low' ? R < 0.5 : cat === 'mid' ? (R >= 0.5 && R < 0.8) : R >= 0.8;
+    if (hit) rows.push({ id: w.id, R });
+  });
+  if (cat !== 'new') rows.sort((a, b) => a.R - b.R || a.id - b.id);
+  return rows.map(r => r.id);
+}
+
 function nextUnlearned(n) {
   return WORDS.filter(w => !state.learned[w.id]).slice(0, n).map(w => w.id);
 }
@@ -275,7 +349,7 @@ function updateLearnStats() {
   const learnedN = Object.keys(state.learned).length;
   let prog = '';
   if (screen === 'quiz' && session.total) prog = `　進行 ${Math.min(session.i + 1, session.total)} / ${session.total}`;
-  if (screen === 'learn' && learn) prog = `　${learn.stage === 'en' ? 'ステップ1/2' : 'ステップ2/2'}　${Math.min(learn.idx + 1, learn.queue.length)} / ${learn.queue.length}${learn.retry ? '（やり直し）' : ''}`;
+  if (screen === 'learn' && learn) prog = `　単語 ${Math.min(learn.idx + 1, learn.queue.length)} / ${learn.queue.length}　${Math.min(learn.rep + 1, COPY_PATTERN.length)}回目 / ${COPY_PATTERN.length}${learn.retry ? '（やり直し）' : ''}`;
   $('learnStats').textContent = `復習対象 ${due}語 ／ 学習済み ${learnedN} / ${WORDS.length}語${prog}`;
 }
 
@@ -325,7 +399,7 @@ function renderQCard() {
   const w = cur.word;
   cardEl.innerHTML = `
     ${tagLine(w)}
-    <div class="prompt">${esc(w.ja)}</div>
+    <div class="prompt">${jaHTML(w)}</div>
     <div id="cardAnswer" class="answer" style="display:${cur.revealed ? 'flex' : 'none'}">
       <div class="word-container"><div class="word">${esc(layoutOf(w.en))}</div>
       <button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button></div>
@@ -400,7 +474,7 @@ function renderQType() {
 
   cardEl.innerHTML = `
     ${tagLine(w, sameMeaningNote(w))}
-    <div class="prompt">${esc(w.ja)}</div>
+    <div class="prompt">${jaHTML(w)}</div>
     <div class="slots" id="slots"></div>
     <input id="typeInput" class="type-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="ここにスペルを入力">
     <div class="msg" id="msg"></div>
@@ -516,7 +590,7 @@ function renderQTap() {
 
   cardEl.innerHTML = `
     ${tagLine(w)}
-    <div class="prompt">${esc(w.ja)}</div>
+    <div class="prompt">${jaHTML(w)}</div>
     <div class="slots" id="slots"></div>
     <div class="msg" id="msg"></div>
     <div class="pool" id="pool"></div>
@@ -600,7 +674,7 @@ function renderResult() {
       <div class="word">${esc(layoutOf(w.en))}</div>
       <button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button>
     </div>
-    <div class="meaning-big">${esc(w.ja)}</div>
+    <div class="meaning-big">${jaHTML(w)}</div>
     <div class="result-info">${detail}</div>
     <div class="btn-group">
       <button class="btn-secondary" id="btnGraph">忘却曲線を見る</button>
@@ -636,41 +710,18 @@ function renderDone() {
 // ホーム画面
 // ==========================================
 const BATCH_PRESETS = [5, 10, 20];
+let activeStudyTab = 'learn';
 
-function renderHome() {
-  screen = 'home';
-  cur = null;
-  learn = null;
-  setChrome();
-  const tn = now();
-  const unl = WORDS.filter(w => !state.learned[w.id]).length;
-  const dueN = buildQueue().length;
-  const { nextDue, nextCount } = nextDueInfo();
+function batchChooserHTML() {
   const bs = state.settings.batchSize;
   const isCustom = BATCH_PRESETS.indexOf(bs) < 0;
-  const n = Math.min(bs, unl);
-  cardEl.innerHTML = `
-    <div class="home-sec">
-      <h3>新しい単語を覚える（タイピング）</h3>
-      <div class="home-sub">未学習 ${unl}語 ／ 一度に覚える単語数を選んでください</div>
-      <div class="chips">
-        ${BATCH_PRESETS.map(p => `<button class="chip${bs === p ? ' on' : ''}" data-batch="${p}">${p}単語</button>`).join('')}
-        <span class="custom-box${isCustom ? ' on' : ''}">カスタム
-          <input type="number" id="customN" min="1" max="100" value="${isCustom ? bs : ''}" placeholder="1〜100"> 単語</span>
-      </div>
-      <button class="btn-success big" id="btnStartLearn" ${unl ? '' : 'disabled'}>${unl ? `${n}単語を覚える` : '全単語を学習済みです'}</button>
-      <div class="home-note">英語を見ながら英語を打つ → 日本語を見ながら日本語を打つ。間違えずに打てたら、並び替え・ヒント付き・完全タイピングで練習できます。</div>
-    </div>
-    <div class="home-sec">
-      <h3>復習する</h3>
-      <div class="home-sub">復習対象 <b>${dueN}語</b>${nextDue < Infinity && !dueN ? `／次の復習は${fmtDur(nextDue - tn)}後（約${nextCount}語）` : ''}</div>
-      <div class="chips" id="homeModes">
-        ${MODES.map(m => `<button class="chip${state.settings.mode === m.key ? ' on' : ''}" data-mode="${m.key}">${m.label}</button>`).join('')}
-      </div>
-      <button class="btn-primary big" id="btnStartReview" ${dueN ? '' : 'disabled'}>${dueN ? `${dueN}語を復習する` : '復習する単語はありません'}</button>
-    </div>`;
-  $('btnStartLearn').onclick = () => startLearn(nextUnlearned(state.settings.batchSize));
-  $('btnStartReview').onclick = () => startSession(buildQueue());
+  return `<div class="chips">
+    ${BATCH_PRESETS.map(p => `<button class="chip${bs === p ? ' on' : ''}" data-batch="${p}">${p}単語</button>`).join('')}
+    <span class="custom-box${isCustom ? ' on' : ''}">カスタム
+      <input type="number" id="customN" min="1" max="100" value="${isCustom ? bs : ''}" placeholder="1〜100"> 単語</span>
+  </div>`;
+}
+function bindBatchInput(onChange) {
   const ci = $('customN');
   ci.addEventListener('input', () => {
     const v = Math.max(1, Math.min(100, parseInt(ci.value, 10) || 0));
@@ -679,9 +730,77 @@ function renderHome() {
     saveState();
     document.querySelectorAll('[data-batch]').forEach(b => b.classList.toggle('on', Number(b.dataset.batch) === v));
     ci.parentElement.classList.toggle('on', BATCH_PRESETS.indexOf(v) < 0);
-    const u = WORDS.filter(w => !state.learned[w.id]).length;
-    $('btnStartLearn').textContent = u ? `${Math.min(v, u)}単語を覚える` : '全単語を学習済みです';
+    onChange(v);
   });
+}
+
+function renderHome() {
+  screen = 'home';
+  cur = null;
+  learn = null;
+  setChrome();
+  if (activeStudyTab === 'review') return renderHomeReview();
+  if (activeStudyTab === 'test') return renderHomeTest();
+  renderHomeLearn();
+}
+
+// ----- 「学習」タブ：未学習の単語をタイピングで覚える -----
+function renderHomeLearn() {
+  const unl = categoryIds('new').length;
+  const label = n => unl ? `${Math.min(n, unl)}単語を覚える` : '全単語を学習済みです';
+  cardEl.innerHTML = `
+    <div class="home-sec">
+      <h3>新しい単語を覚える（タイピング）</h3>
+      <div class="home-sub">未学習 ${unl}語 ／ 一度に覚える単語数を選んでください</div>
+      ${batchChooserHTML()}
+      <button class="btn-success big" id="btnStartLearn" ${unl ? '' : 'disabled'}>${label(state.settings.batchSize)}</button>
+      <div class="home-note">1つの単語を3回続けて打ちます（英語 → 日本語 → 英語）。覚えたあとは、並び替え・ヒント付き・完全タイピングで練習できます。</div>
+    </div>`;
+  $('btnStartLearn').onclick = () => startLearn(nextUnlearned(state.settings.batchSize), 'new', []);
+  bindBatchInput(v => { $('btnStartLearn').textContent = label(v); });
+}
+
+// ----- 「復習」タブ：定着率の区分ごとに、タイピングで覚え直す -----
+function renderHomeReview() {
+  const cat = state.settings.reviewCat;
+  const counts = {};
+  CATS.forEach(c => counts[c.key] = categoryIds(c.key).length);
+  const n = counts[cat];
+  const label = v => n ? `${CAT_LABEL[cat]}の単語を${Math.min(v, n)}単語、覚える` : `${CAT_LABEL[cat]}の単語はありません`;
+  cardEl.innerHTML = `
+    <div class="home-sec">
+      <h3>定着率の区分を選んで、タイピングで覚える</h3>
+      <div class="home-sub">いまの定着率で区分けしています。学習済みの単語は、定着率が低い順に出ます。</div>
+      <div class="cat-grid">
+        ${CATS.map(c => `<button class="cat${cat === c.key ? ' on' : ''}" data-cat="${c.key}"><span class="cat-n">${counts[c.key]}<small>語</small></span><span class="cat-l">${c.label}</span></button>`).join('')}
+      </div>
+      <div class="home-sub">一度に覚える単語数</div>
+      ${batchChooserHTML()}
+      <button class="btn-success big" id="btnStartReviewLearn" ${n ? '' : 'disabled'}>${label(state.settings.batchSize)}</button>
+      <div class="home-note">学習済みの単語は、打ち終わると「再学習」として記録され、定着率が100%に戻ります（記憶の強さは変わりません）。</div>
+    </div>`;
+  $('btnStartReviewLearn').onclick = () => startLearn(categoryIds(cat).slice(0, state.settings.batchSize), cat, []);
+  bindBatchInput(v => { $('btnStartReviewLearn').textContent = label(v); });
+}
+
+// ----- 「忘却テスト」タブ：復習の時間が来た単語をテスト -----
+function renderHomeTest() {
+  const tn = now();
+  const dueN = buildQueue().length;
+  const { nextDue, nextCount } = nextDueInfo();
+  cardEl.innerHTML = `
+    <div class="home-sec">
+      <h3>忘却テスト</h3>
+      <div class="home-sub">忘却曲線で復習の時間が来た単語（定着率70%以下）をテストします。結果は忘却曲線に記録されます。</div>
+      <div class="test-count"><b>${dueN}</b><span>語がテスト対象</span></div>
+      ${!dueN && nextDue < Infinity ? `<div class="home-sub">次のテスト対象は ${fmtDur(nextDue - tn)}後（${fmtDate(nextDue)}ごろ、約${nextCount}語）</div>` : ''}
+      <div class="home-sub">出題形式</div>
+      <div class="chips" id="homeModes">
+        ${MODES.map(m => `<button class="chip${state.settings.mode === m.key ? ' on' : ''}" data-mode="${m.key}">${m.label}</button>`).join('')}
+      </div>
+      <button class="btn-primary big" id="btnStartTest" ${dueN ? '' : 'disabled'}>${dueN ? `${dueN}語をテストする` : 'テストする単語はありません'}</button>
+    </div>`;
+  $('btnStartTest').onclick = () => startSession(buildQueue());
 }
 
 // ==========================================
@@ -704,14 +823,18 @@ function normTyped(v, lang) {
   return Array.from(s.replace(PUNCT_RE, ''));
 }
 
-function startLearn(ids) {
+const COPY_PATTERN = ['en', 'ja', 'en'];   // 1つの単語を打つ順番（3回）。英語→日本語→英語
+
+function startLearn(ids, cat, series) {
   if (!ids.length) return;
-  learn = { ids: ids.slice(), stage: 'en', queue: ids.slice(), idx: 0, missed: [], retry: false };
+  learn = { ids: ids.slice(), queue: ids.slice(), idx: 0, rep: 0, wordMissed: false, missed: [], retry: false, cat: cat || 'new', series: series || [] };
   screen = 'learn';
   session = { queue: [], i: 0, ok: 0, ng: 0, learned: 0, total: 0 };
   setChrome();
   renderMsg(`${ids.length}単語をタイピングで覚えます`,
-    'ステップ1（英語から日本語）：カードを見ながら<b>英語</b>を打ちます。<br>ステップ2（日本語から英語）：カードを見ながら<b>日本語</b>を打ちます。<br>間違えた単語は、最後にもう一度打ちます。',
+    `1つの単語を<b>${COPY_PATTERN.length}回</b>続けて打ちます。<br>
+     ${COPY_PATTERN.map((p, i) => `${i + 1}回目：${p === 'en' ? '英語を打つ（英語から日本語）' : '日本語を打つ（日本語から英語）'}`).join('<br>')}<br>
+     間違えた単語は、最後にもう一度（${COPY_PATTERN.length}回）打ちます。`,
     'はじめる', nextLearnItem);
 }
 
@@ -733,26 +856,20 @@ function nextLearnItem() {
       learn.queue = learn.missed.slice();
       learn.missed = [];
       learn.idx = 0;
+      learn.rep = 0;
       learn.retry = true;
       return renderMsg('間違えた単語をもう一度', `間違えた${n}語を、間違えずに打てるまで繰り返します。`, 'つづける', nextLearnItem);
-    }
-    if (learn.stage === 'en') {
-      learn.stage = 'ja';
-      learn.queue = learn.ids.slice();
-      learn.idx = 0;
-      learn.retry = false;
-      return renderMsg('ステップ1クリア！', '次は、カードを見ながら<b>日本語</b>を打ちます。<br>日本語入力（IME）をオンにして、変換したら Enter で確定してください。', 'つづける', nextLearnItem);
     }
     return finishLearn();
   }
   const id = learn.queue[learn.idx];
-  cur = { phase: 'q', copy: learn.stage, word: BY_ID[id], mistake: false, completed: false, composing: false, compStart: 0 };
+  cur = { phase: 'q', copy: COPY_PATTERN[learn.rep], word: BY_ID[id], mistake: false, completed: false, composing: false, compStart: 0 };
   renderCard();
 }
 
 function finishLearn() {
-  learn.ids.forEach(id => { if (!state.learned[id]) learnNew(id); });
-  lastBatch = { ids: learn.ids.slice() };
+  learn.ids.forEach(id => { if (!state.learned[id]) learnNew(id); else restudy(id); });
+  lastBatch = { ids: learn.ids.slice(), cat: learn.cat, series: learn.series.concat(learn.ids) };
   renderChoose();
 }
 
@@ -768,9 +885,9 @@ function renderCopy() {
   const first = jaFirst(w);
   const restJa = w.ja.slice(first.length);
   const jaHtml = state.settings.jaFirstOnly && lang === 'ja' && restJa
-    ? `<span class="hl">${esc(first)}</span><span class="dim">${esc(restJa)}</span>`
-    : esc(w.ja);
-  const stageTxt = lang === 'en' ? '英語から日本語（英語を打つ）' : '日本語から英語（日本語を打つ）';
+    ? `<span class="hl">${rubyHTML(w, 0, first.length)}</span><span class="dim">${rubyHTML(w, first.length, w.ja.length)}</span>`
+    : jaHTML(w);
+  const stageTxt = `${learn.rep + 1}回目／${COPY_PATTERN.length}　` + (lang === 'en' ? '英語から日本語（英語を打つ）' : '日本語から英語（日本語を打つ）');
 
   cardEl.innerHTML = `
     <div class="tag-line"><span class="tag new">${stageTxt}</span>${learn.retry ? '<span class="tag soft">やり直し</span>' : ''}</div>
@@ -874,10 +991,16 @@ function completeCopy() {
   updateCopy();
   beep(880, 0.12);
   autoSpeak(me.word);
-  if (me.mistake && learn.missed.indexOf(me.word.id) < 0) learn.missed.push(me.word.id);
+  if (me.mistake) learn.wordMissed = true;
   setTimeout(() => {
     if (cur !== me || !learn) return;
-    learn.idx++;
+    learn.rep++;
+    if (learn.rep >= COPY_PATTERN.length) {
+      if (learn.wordMissed && learn.missed.indexOf(me.word.id) < 0) learn.missed.push(me.word.id);
+      learn.rep = 0;
+      learn.idx++;
+      learn.wordMissed = false;
+    }
     nextLearnItem();
   }, 750);
 }
@@ -888,14 +1011,19 @@ function renderChoose(note) {
   cur = null;
   setChrome();
   const ids = lastBatch ? lastBatch.ids : [];
+  const cat = lastBatch ? lastBatch.cat : 'new';
   const size = state.settings.batchSize;
-  const unl = WORDS.filter(w => !state.learned[w.id]).length;
-  const nextN = Math.min(size, unl);
+  const nextIds = categoryIds(cat, lastBatch ? lastBatch.series : []).slice(0, size);
+  const isNew = cat === 'new';
   cardEl.innerHTML = `
-    <div class="done-title">${ids.length}単語を覚えました 🎉</div>
-    <div class="result-info">${note ? esc(note) + '<br>' : ''}1回目の学習を記録しました。次の復習は約${fmtDur(-Math.log(THRESH) * S0 * H)}後が目安です。</div>
+    <div class="done-title">${ids.length}単語を${isNew ? '覚えました' : '打ち直しました'} 🎉</div>
+    <div class="result-info">${note ? esc(note) + '<br>' : ''}${isNew
+      ? `1回目の学習を記録しました。次の復習は約${fmtDur(-Math.log(THRESH) * S0 * H)}後が目安です。`
+      : '再学習として記録しました（定着率が100%に戻りました）。'}</div>
     <div class="choose">
-      <button class="btn-success big" id="chNext" ${unl ? '' : 'disabled'}>${unl ? `次の${nextN}単語を覚える` : '未学習の単語はありません'}</button>
+      <button class="btn-success big" id="chNext" ${nextIds.length ? '' : 'disabled'}>${nextIds.length
+        ? `次の${nextIds.length}単語を${isNew ? '覚える' : '打ち直す'}${isNew ? '' : `（${CAT_LABEL[cat]}）`}`
+        : (isNew ? '未学習の単語はありません' : `${CAT_LABEL[cat]}の残りはありません`)}</button>
       <div class="choose-title">この${ids.length}単語を練習する（練習の結果は記録されません）</div>
       <div class="btn-group">
         <button class="btn-secondary" data-practice="tap">並び替え</button>
@@ -904,7 +1032,7 @@ function renderChoose(note) {
       </div>
       <button class="btn-link" id="chHome">ホームへ</button>
     </div>`;
-  $('chNext').onclick = () => startLearn(nextUnlearned(state.settings.batchSize));
+  $('chNext').onclick = () => startLearn(nextIds, cat, lastBatch.series);
   $('chHome').onclick = renderHome;
   cardEl.querySelectorAll('[data-practice]').forEach(b => b.onclick = () => {
     state.settings.mode = b.dataset.practice;
@@ -1063,7 +1191,7 @@ function chartSVG(rec, rangeKey) {
     const x = X(rv.t);
     s += `<line class="c-drop" x1="${x}" x2="${x}" y1="${Y(rv.R)}" y2="${Y(1)}"/>
           <circle class="c-dot ${rv.ok ? 'ok' : 'ng'}" cx="${x}" cy="${Y(rv.R)}" r="5.5">
-            <title>${i + 2}回目 ${fmtDate(rv.t)}／想起時の定着率 ${pct(rv.R)}%／${rv.ok ? '思い出せた' : '忘れた'}</title></circle>`;
+            <title>${i + 2}回目 ${fmtDate(rv.t)}／その時の定着率 ${pct(rv.R)}%／${rv.restudy ? '再学習（タイピング）' : rv.ok ? '思い出せた' : '忘れた'}</title></circle>`;
   });
   // 1回目の学習
   s += `<circle class="c-dot first" cx="${X(t0)}" cy="${Y(1)}" r="5.5"><title>1回目の学習 ${fmtDate(t0)}</title></circle>`;
@@ -1110,14 +1238,14 @@ function renderDetail() {
       <button class="btn-audio" id="dSpeak" aria-label="発音">🔊</button>
       <span class="tag">${esc(w.pos)}</span>
     </div>
-    <div class="d-ja">#${w.id}　${esc(w.ja)}</div>`;
+    <div class="d-ja">#${w.id}　${jaHTML(w)}</div>`;
 
   if (!rec) {
     $('modalBody').innerHTML = head + `
       <div class="d-empty">この単語はまだ学習していません。<br>学習すると、ここに忘却曲線が表示されます。</div>
       <div class="btn-group"><button class="btn-primary" id="dStudy">今すぐ学習する</button></div>`;
     $('dSpeak').onclick = () => speakEn(w);
-    $('dStudy').onclick = () => { closeDetail(); switchTab('learn'); startLearn([w.id]); };
+    $('dStudy').onclick = () => { closeDetail(); switchTab('learn'); startLearn([w.id], 'new', []); };
     return;
   }
 
@@ -1134,7 +1262,7 @@ function renderDetail() {
   rec.reviews.forEach((rv, i) => {
     const prev = i === 0 ? rec.first : rec.reviews[i - 1].t;
     hist += `<tr><td>${i + 2}</td><td>${fmtDate(rv.t)}</td><td>${fmtDur(rv.t - prev)}後</td><td>${pct(rv.R)}%</td>
-      <td class="${rv.ok ? 'ok' : 'ng'}">${rv.ok ? '○' : '×'}${rv.hint ? '（ヒントあり）' : ''} <span class="dim">${esc(MODE_LABEL[rv.mode] || rv.mode)}</span></td></tr>`;
+      <td class="${rv.ok ? 'ok' : 'ng'}">${rv.restudy ? '再学習' : rv.ok ? '○' : '×'}${rv.hint ? '（ヒントあり）' : ''} <span class="dim">${esc(MODE_LABEL[rv.mode] || rv.mode)}</span></td></tr>`;
   });
 
   $('modalBody').innerHTML = head + `
@@ -1151,7 +1279,7 @@ function renderDetail() {
     ${chartSVG(rec, detailRange)}
     <div class="chart-legend">
       <span><i class="dot first"></i>初回の学習</span>
-      <span><i class="dot ok"></i>思い出せた</span>
+      <span><i class="dot ok"></i>思い出せた／再学習</span>
       <span><i class="dot ng"></i>忘れた</span>
       <span><i class="dia"></i>次回復習の目安</span>
       <span><i class="ln"></i>実線＝これまで／破線＝今後の予測</span>
@@ -1162,18 +1290,28 @@ function renderDetail() {
     <div class="btn-group"><button class="btn-primary" id="dReview">今すぐこの単語を復習する</button></div>
     <div class="note-small">※エビングハウスの忘却曲線をもとにした推定値です。</div>`;
   $('dSpeak').onclick = () => speakEn(w);
-  $('dReview').onclick = () => { closeDetail(); switchTab('learn'); startSession([{ id: w.id, kind: 'review' }]); };
+  $('dReview').onclick = () => { closeDetail(); switchTab('test'); startSession([{ id: w.id, kind: 'review' }]); };
 }
 
 // ==========================================
 // タブ・設定・データ操作
 // ==========================================
 function switchTab(name) {
+  const study = name !== 'graph';
+  if (study && name !== activeStudyTab) {
+    if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。タブを切り替えますか？')) return;
+    activeStudyTab = name;
+    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    $('tab-learn').hidden = false;
+    $('tab-graph').hidden = true;
+    renderHome();
+    return;
+  }
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  $('tab-learn').hidden = name !== 'learn';
-  $('tab-graph').hidden = name !== 'graph';
+  $('tab-learn').hidden = !study;
+  $('tab-graph').hidden = study;
   if (name === 'graph') renderGraphTab();
-  if (name === 'learn') {
+  else {
     updateLearnStats();
     if (screen === 'home') renderHome();
   }
@@ -1253,6 +1391,13 @@ document.addEventListener('click', ev => {
       cur.mistake = false; cur.hint = false; cur.assist = false; cur.revealed = false;
       renderCard();
     }
+    return;
+  }
+  const ct = ev.target.closest('button[data-cat]');
+  if (ct) {
+    state.settings.reviewCat = ct.dataset.cat;
+    saveState();
+    if (screen === 'home') renderHome();
     return;
   }
   const g = ev.target.closest('button[data-batch]');
