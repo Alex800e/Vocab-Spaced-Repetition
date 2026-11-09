@@ -4,15 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>忘却曲線 英単語学習（英検7級）</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=4">
 </head>
 <body>
 
 <div class="container">
-    <h1>忘却曲線 英単語 <small>英検7級 620語</small></h1>
+    <h1>忘却曲線 英単語 <small>英検7級 620語</small> <small class="ver">v4</small></h1>
 
     <nav class="tabs">
         <button class="tab active" data-tab="learn">学習</button>
+        <button class="tab" data-tab="review">復習</button>
+        <button class="tab" data-tab="test">忘却テスト</button>
         <button class="tab" data-tab="graph">定着度グラフ</button>
     </nav>
 
@@ -51,7 +53,8 @@
                 <li>1回目の学習直後は S = 24時間（1日後の定着率 約37%）。</li>
                 <li>思い出せた：S がのび、次の復習までの間隔が広がります。早めに思い出せるほど（定着率が低いときに思い出せるほど）よくのびます。</li>
                 <li>忘れた・ヒントを使った・つづりを間違えた：S が半分になります（最小24時間）。</li>
-                <li>定着率が70%を下回った単語が「復習対象」になります。</li>
+                <li>定着率が70%を下回った単語が「忘却テスト」の対象になります。</li>
+                <li>「復習」タブでタイピングを打ち直した単語は「再学習」として記録され、定着率が100%に戻ります（S は変わりません）。</li>
             </ul>
             <p>実際の記憶を測定した値ではなく、目安の推定値です。</p>
         </details>
@@ -99,7 +102,7 @@
     </div>
 </div>
 
-<script src="js/words.js"></script>
-<script src="js/app.js"></script>
+<script src="js/words.js?v=4"></script>
+<script src="js/app.js?v=4"></script>
 </body>
 </html>
