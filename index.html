@@ -21,7 +21,9 @@
         <div class="chips" id="modeChips"></div>
         <div class="stats" id="learnStats"></div>
         <div class="card" id="card"></div>
+        <div class="typearea" id="typeArea"></div>
         <div class="help-text" id="helpText"></div>
+        <button class="btn-link back-home" id="backHome" hidden>← ホームに戻る</button>
     </section>
 
     <!-- ===== 定着度グラフタブ ===== -->
@@ -62,11 +64,7 @@
         <summary>設定・データ</summary>
 
         <div class="setting-row">
-            <label>1日の新規単語数
-                <select id="newPerDay">
-                    <option>5</option><option>10</option><option>20</option><option>30</option><option>50</option>
-                </select>
-            </label>
+            <label><input type="checkbox" id="jaFirst"> 日本語タイピングは最初の意味だけ打つ（例：「を持っている，所持している」→「を持っている」）</label>
             <label><input type="checkbox" id="soundOn"> 効果音</label>
         </div>
 
