@@ -343,3 +343,9 @@ rt { font-size: 0.45em; color: #9ca3af; font-weight: normal; letter-spacing: 0; 
     .tabs .tab { padding: 9px 8px; font-size: 13px; }
     .cat-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ===== 級・テーマの選択 ===== */
+.scope { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; padding: 10px 12px; background: #f3f4f6; border-radius: 8px; font-size: 13px; color: #374151; }
+.scope label { display: flex; align-items: center; gap: 6px; flex: 1 1 200px; min-width: 0; }
+.scope select { flex: 1; min-width: 0; padding: 7px 8px; font-size: 14px; }
+.more-btn { display: block; margin: 10px auto; }
