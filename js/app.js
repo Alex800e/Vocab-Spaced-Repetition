@@ -19,6 +19,26 @@ const MODE_LABEL = {};
 MODES.forEach(m => MODE_LABEL[m.key] = m.label);
 MODE_LABEL.copy = 'タイピング学習';
 
+// ==========================================
+// 単語データ（js/data/words_*.js を級ごとに読み込んで1つにまとめる）
+// ==========================================
+const LEVELS = [['7', '7級'], ['6', '6級'], ['5', '5級'], ['4', '4級'], ['3', '3級'], ['p2', '準2級'], ['2', '2級'], ['p1', '準1級'], ['1', '1級']];
+const LV_NAME = {};
+LEVELS.forEach(l => LV_NAME[l[0]] = l[1]);
+const THEMES = [
+  ['people', '人・家族'], ['body', '体・健康'], ['food', '食べ物・飲み物'], ['nature', '動物・植物・自然'],
+  ['weather', '天気・地球・環境'], ['school', '学校・学習'], ['work', '仕事・お金・ビジネス'], ['society', '社会・政治・法律'],
+  ['tech', '科学・技術・IT'], ['home', '家・衣類・日用品'], ['travel', '乗り物・旅行・場所'], ['hobby', '趣味・スポーツ・芸術'],
+  ['time', '時間・数・量・色'], ['feeling', '気持ち・性格'], ['mind', '考え・言葉・伝達'], ['action', '動作・行動'],
+  ['state', '状態・様子'], ['phrase', '会話・熟語・文法語'], ['other', 'その他']
+];
+const TH_NAME = {};
+THEMES.forEach(t => TH_NAME[t[0]] = t[1]);
+
+const WORDS = [];
+LEVELS.forEach(l => (WORDS_LV[l[0]] || []).forEach(w => { w.lv = l[0]; WORDS.push(w); }));
+WORDS.sort((a, b) => a.id - b.id);
+
 const BY_ID = {};
 WORDS.forEach(w => BY_ID[w.id] = w);
 
@@ -27,7 +47,7 @@ const ALT = {};
 (function () {
   const byJa = {};
   WORDS.forEach(w => (byJa[w.ja] = byJa[w.ja] || []).push(w.id));
-  WORDS.forEach(w => ALT[w.id] = byJa[w.ja].filter(i => i !== w.id));
+  WORDS.forEach(w => ALT[w.id] = byJa[w.ja].filter(i => i !== w.id).slice(0, 6));
 })();
 
 // ==========================================
@@ -96,16 +116,32 @@ function dateKey(t) {
 function defaultState() {
   return {
     learned: {},                                   // id -> {first, last, S, reviews:[{t, ok, R, S0, S1, mode, hint}]}
-    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low' },
+    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low', level: 'all', theme: 'all' },
+    version: 2,
     offsetMs: 0,                                   // テスト用の仮想時間
     daily: { date: '', count: 0 }                  // 今日の新規学習数
   };
+}
+// 旧バージョン（7級620語のみ）の学習記録を、新しい単語番号に付け替える
+function migrateState(s) {
+  if (s.version >= 2) return s;
+  const moved = {};
+  Object.keys(s.learned || {}).forEach(k => {
+    const nid = (typeof LEGACY_IDS !== 'undefined') ? LEGACY_IDS[k] : null;
+    if (!nid) return;
+    const rec = s.learned[k];
+    if (!moved[nid] || rec.S > moved[nid].S) moved[nid] = rec;
+  });
+  s.learned = moved;
+  s.version = 2;
+  return s;
 }
 function loadState() {
   const base = defaultState();
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (s && typeof s.learned === 'object' && s.learned) {
+      migrateState(s);
       return Object.assign(base, s, { settings: Object.assign(base.settings, s.settings || {}) });
     }
   } catch (e) { /* 初回など */ }
@@ -253,11 +289,35 @@ function buildQueue() {
   const due = [];
   Object.keys(state.learned).forEach(k => {
     const id = Number(k);
+    if (!BY_ID[id] || !inScope(BY_ID[id])) return;
     const R = retention(state.learned[id], tn);
     if (R <= THRESH) due.push({ id, kind: 'review', R });
   });
   due.sort((a, b) => a.R - b.R);
   return due;
+}
+
+// ---------- 学習する範囲（級・テーマ） ----------
+function inScope(w) {
+  const st = state.settings;
+  return (st.level === 'all' || w.lv === st.level) && (st.theme === 'all' || w.th === st.theme);
+}
+const scopeCount = (lv, th) => WORDS.reduce((n, w) => n + ((lv === 'all' || w.lv === lv) && (th === 'all' || w.th === th) ? 1 : 0), 0);
+function scopeLabel() {
+  const st = state.settings;
+  const a = st.level === 'all' ? 'すべての級' : LV_NAME[st.level];
+  const b = st.theme === 'all' ? 'すべてのテーマ' : TH_NAME[st.theme];
+  return `${a}／${b}`;
+}
+function renderScopeBar() {
+  const st = state.settings;
+  $('scopeLevel').innerHTML = `<option value="all">すべての級（${WORDS.length}語）</option>` +
+    LEVELS.map(l => `<option value="${l[0]}">${l[1]}（${scopeCount(l[0], 'all')}語）</option>`).join('');
+  $('scopeLevel').value = st.level;
+  if (st.theme !== 'all' && !scopeCount(st.level, st.theme)) st.theme = 'all';
+  $('scopeTheme').innerHTML = `<option value="all">すべてのテーマ（${scopeCount(st.level, 'all')}語）</option>` +
+    THEMES.filter(t => scopeCount(st.level, t[0])).map(t => `<option value="${t[0]}">${t[1]}（${scopeCount(st.level, t[0])}語）</option>`).join('');
+  $('scopeTheme').value = st.theme;
 }
 
 const CATS = [
@@ -276,7 +336,7 @@ function categoryIds(cat, exclude) {
   (exclude || []).forEach(i => ex[i] = true);
   const rows = [];
   WORDS.forEach(w => {
-    if (ex[w.id]) return;
+    if (ex[w.id] || !inScope(w)) return;
     const rec = state.learned[w.id];
     if (cat === 'new') { if (!rec) rows.push({ id: w.id, R: -1 }); return; }
     if (!rec) return;
@@ -289,13 +349,14 @@ function categoryIds(cat, exclude) {
 }
 
 function nextUnlearned(n) {
-  return WORDS.filter(w => !state.learned[w.id]).slice(0, n).map(w => w.id);
+  return categoryIds('new').slice(0, n);
 }
 
 function nextDueInfo() {
   const tn = now();
   let nextDue = Infinity, nextCount = 0;
   Object.keys(state.learned).forEach(k => {
+    if (!BY_ID[k] || !inScope(BY_ID[k])) return;
     const d = dueTime(state.learned[k]);
     if (d > tn) {
       if (d < nextDue - 60000) { nextDue = d; nextCount = 1; }
@@ -345,12 +406,17 @@ function goNext() {
 function updateLearnStats() {
   const tn = now();
   let due = 0;
-  Object.keys(state.learned).forEach(k => { if (retention(state.learned[k], tn) <= THRESH) due++; });
-  const learnedN = Object.keys(state.learned).length;
+  let learnedN = 0;
+  Object.keys(state.learned).forEach(k => {
+    if (!BY_ID[k] || !inScope(BY_ID[k])) return;
+    learnedN++;
+    if (retention(state.learned[k], tn) <= THRESH) due++;
+  });
+  const total = scopeCount(state.settings.level, state.settings.theme);
   let prog = '';
   if (screen === 'quiz' && session.total) prog = `　進行 ${Math.min(session.i + 1, session.total)} / ${session.total}`;
   if (screen === 'learn' && learn) prog = `　単語 ${Math.min(learn.idx + 1, learn.queue.length)} / ${learn.queue.length}　${Math.min(learn.rep + 1, COPY_PATTERN.length)}回目 / ${COPY_PATTERN.length}${learn.retry ? '（やり直し）' : ''}`;
-  $('learnStats').textContent = `復習対象 ${due}語 ／ 学習済み ${learnedN} / ${WORDS.length}語${prog}`;
+  $('learnStats').textContent = `復習対象 ${due}語 ／ 学習済み ${learnedN} / ${total}語${prog}`;
 }
 
 // 画面ごとの表示切り替え
@@ -1061,7 +1127,7 @@ function renderChoose(note) {
 // ==========================================
 // 定着度グラフ（一覧）
 // ==========================================
-let gFilter = 'all', gSort = 'Rasc', gQuery = '';
+let gFilter = 'all', gSort = 'Rasc', gQuery = '', gLimit = 300;
 const FILTERS = [
   { key: 'all', label: 'すべて' },
   { key: 'due', label: '要復習(70%以下)' },
@@ -1081,26 +1147,28 @@ function colorCls(R) {
 
 function renderGraphTab() {
   const tn = now();
-  const rows = WORDS.map(w => {
+  const scoped = WORDS.filter(inScope);
+  const N = scoped.length || 1;
+  const rows = scoped.map(w => {
     const rec = state.learned[w.id];
     return { w, rec, R: rec ? retention(rec, tn) : null };
   });
   const learned = rows.filter(r => r.rec);
   const sumR = learned.reduce((s, r) => s + r.R, 0);
   const avgLearned = learned.length ? sumR / learned.length : 0;
-  const overall = sumR / WORDS.length;
+  const overall = sumR / N;
   const cHigh = learned.filter(r => r.R >= 0.8).length;
   const cMid = learned.filter(r => r.R >= 0.5 && r.R < 0.8).length;
   const cLow = learned.filter(r => r.R < 0.5).length;
-  const cNew = WORDS.length - learned.length;
+  const cNew = scoped.length - learned.length;
   const cDue = learned.filter(r => r.R <= THRESH).length;
 
   $('summary').innerHTML = `
-    <div class="kpi"><div class="kpi-v">${pct(overall)}%</div><div class="kpi-l">全${WORDS.length}語の定着率</div></div>
+    <div class="kpi"><div class="kpi-v">${pct(overall)}%</div><div class="kpi-l">${scoped.length}語の定着率</div></div>
     <div class="kpi"><div class="kpi-v">${learned.length ? pct(avgLearned) + '%' : '-'}</div><div class="kpi-l">学習済み${learned.length}語の平均</div></div>
     <div class="kpi"><div class="kpi-v">${cDue}</div><div class="kpi-l">復習対象（70%以下）</div></div>`;
 
-  const seg = (n, cls) => n ? `<i class="${cls}" style="width:${n / WORDS.length * 100}%"></i>` : '';
+  const seg = (n, cls) => n ? `<i class="${cls}" style="width:${n / N * 100}%"></i>` : '';
   $('stackbar').innerHTML = seg(cHigh, 'lv-high') + seg(cMid, 'lv-mid') + seg(cLow, 'lv-low') + seg(cNew, 'lv-new');
   $('legend').innerHTML = `
     <span><i class="lv-high"></i>80%以上 ${cHigh}語</span>
@@ -1125,7 +1193,8 @@ function renderGraphTab() {
   else if (gSort === 'due') list.sort((a, b) => (a.rec ? dueTime(a.rec) : Infinity) - (b.rec ? dueTime(b.rec) : Infinity) || a.w.id - b.w.id);
   else list.sort((a, b) => a.w.id - b.w.id);
 
-  $('wordList').innerHTML = list.length ? list.map(r => {
+  const shown = list.slice(0, gLimit);
+  $('wordList').innerHTML = list.length ? shown.map(r => {
     const bar = r.rec
       ? `<span class="bar"><i class="${colorCls(r.R)}" style="width:${pct(r.R)}%"></i></span><span class="pc">${pct(r.R)}%</span>`
       : `<span class="bar"></span><span class="pc dim">未学習</span>`;
@@ -1133,7 +1202,9 @@ function renderGraphTab() {
       <span class="no">${r.w.id}</span>
       <span class="en">${esc(layoutOf(r.w.en))}</span>
       <span class="ja">${esc(r.w.ja)}</span>${bar}</div>`;
-  }).join('') : '<div class="empty-list">該当する単語がありません</div>';
+  }).join('') + (list.length > gLimit ? `<button class="btn-secondary more-btn" id="gMore">さらに表示（残り${list.length - gLimit}語）</button>` : '')
+    : '<div class="empty-list">該当する単語がありません</div>';
+  if (list.length > gLimit) $('gMore').onclick = () => { gLimit += 300; renderGraphTab(); };
 }
 
 // ==========================================
@@ -1359,6 +1430,7 @@ function importData(ev) {
     try {
       const imp = JSON.parse(e.target.result);
       if (!imp || typeof imp.learned !== 'object') { alert('ファイルの形式が正しくありません'); return; }
+      migrateState(imp);
       if (confirm('現在の学習記録が上書きされます。よろしいですか？')) {
         const base = defaultState();
         state = Object.assign(base, imp, { settings: Object.assign(base.settings, imp.settings || {}) });
@@ -1383,6 +1455,7 @@ function resetAll() {
 }
 
 function refreshAll() {
+  renderScopeBar();
   $('jaFirst').checked = !!state.settings.jaFirstOnly;
   $('soundOn').checked = !!state.settings.sound;
   renderTimeNow();
@@ -1394,6 +1467,19 @@ function refreshAll() {
 // イベント登録
 // ==========================================
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+
+function onScopeChange(level, theme) {
+  if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。範囲を変えますか？')) { renderScopeBar(); return; }
+  state.settings.level = level;
+  state.settings.theme = theme;
+  saveState();
+  gLimit = 300;
+  renderScopeBar();
+  if (!$('tab-graph').hidden) renderGraphTab();
+  else renderHome();
+}
+$('scopeLevel').addEventListener('change', ev => onScopeChange(ev.target.value, 'all'));
+$('scopeTheme').addEventListener('change', ev => onScopeChange(state.settings.level, ev.target.value));
 
 document.addEventListener('click', ev => {
   const b = ev.target.closest('button[data-mode]');
@@ -1434,10 +1520,11 @@ $('gFilter').addEventListener('click', ev => {
   const b = ev.target.closest('button[data-filter]');
   if (!b) return;
   gFilter = b.dataset.filter;
+  gLimit = 300;
   renderGraphTab();
 });
-$('gQuery').addEventListener('input', ev => { gQuery = ev.target.value; renderGraphTab(); });
-$('gSort').addEventListener('change', ev => { gSort = ev.target.value; renderGraphTab(); });
+$('gQuery').addEventListener('input', ev => { gQuery = ev.target.value; gLimit = 300; renderGraphTab(); });
+$('gSort').addEventListener('change', ev => { gSort = ev.target.value; gLimit = 300; renderGraphTab(); });
 $('wordList').addEventListener('click', ev => {
   const row = ev.target.closest('.row');
   if (row) openDetail(Number(row.dataset.id));
