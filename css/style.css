@@ -349,3 +349,18 @@ rt { font-size: 0.45em; color: #9ca3af; font-weight: normal; letter-spacing: 0; 
 .scope label { display: flex; align-items: center; gap: 6px; flex: 1 1 200px; min-width: 0; }
 .scope select { flex: 1; min-width: 0; padding: 7px 8px; font-size: 14px; }
 .more-btn { display: block; margin: 10px auto; }
+
+.load-error { background: #fef2f2; color: #b91c1c; border: 2px solid #fca5a5; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; font-size: 14px; line-height: 1.6; font-weight: bold; }
+
+/* ===== 文字埋め ===== */
+.slot.blank { border: 2px dashed var(--primary); background: #eef2ff; }
+.slot.blank.next { border-style: solid; box-shadow: 0 0 0 3px rgba(79,70,229,.25); }
+
+/* ===== 3回打ちの進み具合 ===== */
+.rep-box { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 4px; }
+.rep-text { font-size: 20px; font-weight: bold; color: var(--primary); }
+.rep-dots { display: flex; gap: 10px; }
+.rep-dot { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; background: #e5e7eb; color: #9ca3af; }
+.rep-dot.done { background: var(--success); color: white; }
+.rep-dot.now { background: var(--primary); color: white; box-shadow: 0 0 0 4px rgba(79,70,229,.25); }
+.rep-sub { font-size: 12px; color: var(--sub); }

@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>忘却曲線 英単語学習（英検7級）</title>
-    <link rel="stylesheet" href="css/style.css?v=6">
+    <link rel="stylesheet" href="css/style.css?v=8">
 </head>
 <body>
 
 <div class="container">
-    <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v6</small></h1>
+    <div id="loadError" class="load-error" hidden></div>
+    <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v8</small></h1>
 
     <nav class="tabs">
         <button class="tab active" data-tab="learn">学習</button>
@@ -108,17 +109,41 @@
     </div>
 </div>
 
-<script>var WORDS_LV = {};</script>
-<script src="js/data/words_7.js?v=6"></script>
-<script src="js/data/words_6.js?v=6"></script>
-<script src="js/data/words_5.js?v=6"></script>
-<script src="js/data/words_4.js?v=6"></script>
-<script src="js/data/words_3.js?v=6"></script>
-<script src="js/data/words_p2.js?v=6"></script>
-<script src="js/data/words_2.js?v=6"></script>
-<script src="js/data/words_p1.js?v=6"></script>
-<script src="js/data/words_1.js?v=6"></script>
-<script src="js/data/legacy.js?v=6"></script>
-<script src="js/app.js?v=6"></script>
+<script>
+var WORDS_LV = {};
+var __errs = [];
+window.addEventListener("error", function (e) { __errs.push((e.message || "") + (e.filename ? " (" + e.filename.split("/").slice(-2).join("/") + ")" : "")); });
+</script>
+<script src="js/data/words_7.js?v=8"></script>
+<script src="js/data/words_6.js?v=8"></script>
+<script src="js/data/words_5.js?v=8"></script>
+<script src="js/data/words_4.js?v=8"></script>
+<script src="js/data/words_3.js?v=8"></script>
+<script src="js/data/words_p2.js?v=8"></script>
+<script src="js/data/words_2.js?v=8"></script>
+<script src="js/data/words_p1.js?v=8"></script>
+<script src="js/data/words_1.js?v=8"></script>
+<script src="js/data/legacy.js?v=8"></script>
+<script src="js/app.js?v=8"></script>
+<script>
+// ファイルの置き忘れ・古いファイルが混ざっているときに、画面に原因を表示する
+(function () {
+  var msg = "";
+  var wordsOk = false;
+  try { wordsOk = typeof WORDS !== "undefined" && WORDS.length > 0; } catch (e) {}
+  if (typeof APP_VERSION === "undefined" || APP_VERSION !== "v8") {
+    msg = "js/app.js が古い、または見つかりません。zipの中身（js・css・index.html）をすべて新しいものに上書きしてください。";
+  } else if (!wordsOk) {
+    msg = "単語データが読み込めていません。js/data フォルダ（words_7.js など10ファイル）が、フォルダごとアップロードされているか確認してください。";
+  } else if (__errs.length) {
+    msg = "エラーが発生しました：" + __errs[0];
+  }
+  if (msg) {
+    var b = document.getElementById("loadError");
+    b.textContent = msg + "　（直らないときは Ctrl+F5 で再読み込み）";
+    b.hidden = false;
+  }
+})();
+</script>
 </body>
 </html>

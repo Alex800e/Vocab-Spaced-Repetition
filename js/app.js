@@ -1,4 +1,5 @@
 'use strict';
+var APP_VERSION = 'v8';
 
 // ==========================================
 // 定数・記憶モデル
@@ -12,6 +13,7 @@ const STORAGE_KEY = 'kb7_state_v1';
 const MODES = [
   { key: 'card', label: 'カード' },
   { key: 'tap',  label: '並び替え' },
+  { key: 'fill', label: '文字埋め' },
   { key: 'hint', label: '最初の文字ヒント＋タイピング' },
   { key: 'type', label: '完全タイピング' }
 ];
@@ -439,7 +441,7 @@ function renderModeChips() {
 
 function renderHelp() {
   const m = state.settings.mode;
-  let t = '※ヒントを使う・つづりを間違える・「わからない」を押すと不正解（要復習）として記録されます。';
+  let t = '※ヒントを使う・つづりを間違える・「わからない」を押すと不正解（要復習）として記録されます。間違えたときは、間違えずに答えられるまで同じ単語をやり直します。';
   if (m === 'card') t = '※PCは [Space] で答え表示、[←] 忘れた / [→] 覚えている でも操作できます。';
   $('helpText').textContent = t;
 }
@@ -452,7 +454,7 @@ function renderCard() {
   if (cur.phase === 'result') return renderResult();
   const m = state.settings.mode;
   if (m === 'card') return renderQCard();
-  if (m === 'tap') return renderQTap();
+  if (m === 'tap' || m === 'fill') return renderQTap();
   return renderQType();
 }
 
@@ -636,8 +638,19 @@ function updateTyping() {
 // ---------- 並び替え（タップ式） ----------
 function renderQTap() {
   const w = cur.word;
-  const L = lettersOf(w.en).split('');
-  const nDummy = L.length <= 3 ? 0 : L.length <= 7 ? 1 : 2;
+  const all = lettersOf(w.en).split('');
+  cur.fill = state.settings.mode === 'fill';
+  let L = all;
+  if (cur.fill) {
+    // 文字埋め：1文字（長い単語は2文字）をランダムに抜く
+    const k = Math.min(all.length >= 8 ? 2 : 1, all.length);
+    const idx = all.map((_, i) => i);
+    const pick = [];
+    while (pick.length < k) pick.push(idx.splice(Math.floor(Math.random() * idx.length), 1)[0]);
+    cur.fillPos = pick.sort((a, b) => a - b);
+    L = cur.fillPos.map(p => all[p]);
+  }
+  const nDummy = cur.fill ? 2 : (all.length <= 3 ? 0 : all.length <= 7 ? 1 : 2);
   const alphabet = 'abcdefghijklmnopqrstuvwxyz'.split('').filter(c => L.indexOf(c) < 0);
   const dummies = [];
   while (dummies.length < nDummy && alphabet.length) {
@@ -675,8 +688,17 @@ function renderQTap() {
 
 function updateTap() {
   const w = cur.word;
-  $('slots').innerHTML = slotsHTML(layoutOf(w.en), (li, ch) =>
-    li < cur.pos ? { cls: 'ok', ch } : { cls: 'empty', ch: '' });
+  if (cur.fill) {
+    $('slots').innerHTML = slotsHTML(layoutOf(w.en), (li, ch) => {
+      const k = cur.fillPos.indexOf(li);
+      if (k < 0) return { cls: 'fixed', ch };
+      if (k < cur.pos) return { cls: 'ok', ch };
+      return { cls: 'blank' + (k === cur.pos ? ' next' : ''), ch: '' };
+    });
+  } else {
+    $('slots').innerHTML = slotsHTML(layoutOf(w.en), (li, ch) =>
+      li < cur.pos ? { cls: 'ok', ch } : { cls: 'empty', ch: '' });
+  }
   const next = cur.target[cur.pos];
   const showHint = cur.assist || cur.hintPos === cur.pos;
   let hinted = false;
@@ -688,7 +710,7 @@ function updateTap() {
     return `<button class="${cls}" data-i="${i}" ${used ? 'disabled' : ''}>${c}</button>`;
   }).join('');
   const msg = $('msg');
-  if (cur.assist) { msg.className = 'msg warn'; msg.textContent = '光っている文字を順にタップしてください（不正解として記録されます）'; }
+  if (cur.assist) { msg.className = 'msg warn'; msg.textContent = '光っている文字を順にタップしてください（不正解として記録され、やり直しになります）'; }
   else if (cur.hint) { msg.className = 'msg warn'; msg.textContent = 'ヒントを使ったので不正解として記録されます'; }
   else if (cur.mistake) { msg.className = 'msg warn'; msg.textContent = '間違えたので不正解として記録されます'; }
   else { msg.className = 'msg'; msg.textContent = ''; }
@@ -716,8 +738,9 @@ function tapKey(i, btn) {
 function finishQuestion(ok) {
   cur.phase = 'result';
   cur.ok = ok;
-  if (!cur.practice) {
-    cur.info = applyReview(cur.word.id, ok, state.settings.mode, cur.hint);
+  if (!cur.retryAttempt) {
+    // 最初の答えだけを記録する（やり直しは記録しない）
+    if (!cur.practice) cur.info = applyReview(cur.word.id, ok, state.settings.mode, cur.hint);
     ok ? session.ok++ : session.ng++;
   }
   updateLearnStats();
@@ -725,17 +748,27 @@ function finishQuestion(ok) {
   autoSpeak(cur.word);
 }
 
+// 間違えたら、同じ単語をもう一度（間違えずに答えるまで次へ進めない）
+function retryCurrent() {
+  if (!cur || cur.phase !== 'result' || cur.ok) return;
+  cur = { item: cur.item, word: cur.word, phase: 'q', practice: cur.practice, retryAttempt: true,
+          mistake: false, hint: false, assist: false, ok: null, info: null, revealed: false };
+  renderCard();
+}
+
 function renderResult() {
   const w = cur.word;
   const info = cur.info;
-  let detail = cur.practice ? '確認問題でした（この結果は記録されません）。<br>次の復習は、時間がたってから出題されます。' : '';
+  let detail = cur.practice ? '練習問題です（この結果は記録されません）。'
+    : cur.retryAttempt ? 'やり直しの結果は記録されません（最初の答えだけを記録しています）。' : '';
   if (info) {
     const dueTxt = info.due - info.t <= 0 ? 'すぐ' : fmtDur(info.due - info.t) + '後';
     detail = `思い出した時の定着率 <b>${pct(info.R)}%</b><br>
       次の復習の目安：<b>${dueTxt}</b>（${fmtDate(info.due)}ごろ）`;
   }
+  if (!cur.ok) detail += (detail ? '<br>' : '') + '<b>間違えずに答えられるまで、次の単語には進めません。</b>';
   cardEl.innerHTML = `
-    <div class="result-mark ${cur.ok ? 'ok' : 'ng'}">${cur.ok ? '○ 正解！' : '× 要復習'}</div>
+    <div class="result-mark ${cur.ok ? 'ok' : 'ng'}">${cur.ok ? '○ 正解！' : '× 間違えました'}</div>
     <div class="word-container">
       <div class="word">${esc(layoutOf(w.en))}</div>
       <button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button>
@@ -744,11 +777,11 @@ function renderResult() {
     <div class="result-info">${detail}</div>
     <div class="btn-group">
       <button class="btn-secondary" id="btnGraph">忘却曲線を見る</button>
-      <button class="btn-primary" id="btnNext">次へ [Enter]</button>
+      <button class="btn-primary" id="btnNext">${cur.ok ? '次へ [Enter]' : 'もう一度 [Enter]'}</button>
     </div>`;
   $('btnSpeak').onclick = () => speakEn(w);
   $('btnGraph').onclick = () => openDetail(w.id);
-  $('btnNext').onclick = goNext;
+  $('btnNext').onclick = cur.ok ? goNext : retryCurrent;
 }
 
 function renderDone() {
@@ -896,7 +929,7 @@ function normTyped(v, lang) {
 }
 
 const COPY_PATTERN = ['en', 'en', 'en'];   // 1つの単語を打つ順番（3回）。'en'=英語を打つ / 'ja'=日本語を打つ
-const PRACTICE_CHAIN = ['tap', 'type'];    // 打ち終わったあと続けて行う練習：並び替え → 完全タイピング
+const PRACTICE_CHAIN = ['tap', 'fill', 'type'];    // 打ち終わったあと続けて行う練習：並び替え → 文字埋め → 完全タイピング
 
 function startLearn(ids, cat, series) {
   if (!ids.length) return;
@@ -987,6 +1020,11 @@ function renderCopy() {
     <div class="type-label">${lang === 'en' ? '↑ 上の英語を打ってください' : '↑ 上の日本語を打ってください（日本語入力をオンにして、変換したら Enter で確定）'}</div>
     <div class="slots" id="slots"></div>
     <input id="typeInput" class="type-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${lang === 'en' ? 'ここに入力' : 'ここに入力（日本語）'}">
+    <div class="rep-box" id="repBox">
+      <div class="rep-text">${learn.rep + 1}回目 / ${COPY_PATTERN.length}回</div>
+      <div class="rep-dots">${COPY_PATTERN.map((_, i) => `<span class="rep-dot${i < learn.rep ? ' done' : i === learn.rep ? ' now' : ''}">${i + 1}</span>`).join('')}</div>
+      <div class="rep-sub">単語 ${Math.min(learn.idx + 1, learn.queue.length)} / ${learn.queue.length}${learn.retry ? '（やり直し）' : ''}</div>
+    </div>
     <div class="msg" id="msg"></div>`;
   const inp = $('typeInput');
   inp.addEventListener('compositionstart', () => { cur.composing = true; cur.compStart = inp.value.length; });
@@ -1112,6 +1150,7 @@ function renderChoose(note) {
       <div class="choose-title">この${ids.length}単語を練習する（練習の結果は記録されません）</div>
       <div class="btn-group">
         <button class="btn-secondary" data-practice="tap">並び替え</button>
+        <button class="btn-secondary" data-practice="fill">文字埋め</button>
         <button class="btn-secondary" data-practice="hint">最初の文字ヒント＋タイピング</button>
         <button class="btn-secondary" data-practice="type">完全タイピング</button>
       </div>
@@ -1570,7 +1609,7 @@ document.addEventListener('keydown', ev => {
     cur.onNext();
   } else if (cur.phase === 'result' && ev.key === 'Enter') {
     ev.preventDefault();
-    goNext();
+    if (cur.ok) goNext(); else retryCurrent();
   } else if (cur.phase === 'q' && !cur.copy && state.settings.mode === 'card' && tag !== 'INPUT' && tag !== 'SELECT') {
     if (ev.code === 'Space') { ev.preventDefault(); revealCard(); }
     else if (ev.code === 'ArrowLeft') cardAnswer(false);
