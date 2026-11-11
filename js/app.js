@@ -1,5 +1,5 @@
 'use strict';
-var APP_VERSION = 'v10';
+var APP_VERSION = 'v11';
 
 // ==========================================
 // 定数・記憶モデル
@@ -25,6 +25,7 @@ const MODES = [
 const MODE_LABEL = {};
 MODES.forEach(m => MODE_LABEL[m.key] = m.label);
 MODE_LABEL.copy = 'タイピング学習';
+MODE_LABEL.match = '意味クイズ';
 
 // ==========================================
 // 単語データ（js/data/words_*.js を級ごとに読み込んで1つにまとめる）
@@ -402,8 +403,9 @@ let screen = 'home';
 let learn = null;        // タイピング学習の進行状況
 let lastBatch = null;    // 直前に覚えた単語
 
+function curMode() { return (screen === 'quiz' && session && session.mode) || state.settings.mode; }
 function startSession(items, opts) {
-  session = { queue: items, i: 0, ok: 0, ng: 0, learned: 0, total: items.length, practiceBatch: !!(opts && opts.practiceBatch), practiceIds: opts && opts.practiceIds, chainRest: (opts && opts.chainRest) || [] };
+  session = { mode: opts && opts.mode, queue: items, i: 0, ok: 0, ng: 0, learned: 0, total: items.length, practiceBatch: !!(opts && opts.practiceBatch), practiceIds: opts && opts.practiceIds, chainRest: (opts && opts.chainRest) || [] };
   screen = 'quiz';
   learn = null;
   setChrome();
@@ -464,13 +466,14 @@ function setChrome() {
 
 function renderModeChips() {
   $('modeChips').innerHTML = MODES.map(m =>
-    `<button class="chip${state.settings.mode === m.key ? ' on' : ''}" data-mode="${m.key}">${m.label}</button>`
+    `<button class="chip${curMode() === m.key ? ' on' : ''}" data-mode="${m.key}">${m.label}</button>`
   ).join('');
 }
 
 function renderHelp() {
-  const m = state.settings.mode;
+  const m = curMode();
   let t = '※ヒントを使う・つづりを間違える・「わからない」を押すと不正解（要復習）として記録されます。間違えたときは、間違えずに答えられるまで同じ単語をやり直します。';
+  if (m === 'match') t = '※間違えたら、ほかの選択肢から選び直します。数字キー 1〜8 でも選べます。';
   if (m === 'card') t = '※PCは [Space] で答え表示、[←] 忘れた / [→] 覚えている でも操作できます。';
   $('helpText').textContent = t;
 }
@@ -481,7 +484,8 @@ function renderCard() {
   if (cur.copy) return renderCopy();
   $('typeArea').innerHTML = '';
   if (cur.phase === 'result') return renderResult();
-  const m = state.settings.mode;
+  const m = curMode();
+  if (m === 'match') return renderQMatch();
   if (m === 'card') return renderQCard();
   if (m === 'tap' || m === 'fill') return renderQTap();
   return renderQType();
@@ -515,7 +519,7 @@ function renderQCard() {
   }
 }
 function revealCard() {
-  if (!cur || cur.phase !== 'q' || state.settings.mode !== 'card' || cur.revealed) return;
+  if (!cur || cur.phase !== 'q' || curMode() !== 'card' || cur.revealed) return;
   cur.revealed = true;
   renderQCard();
   autoSpeak(cur.word);
@@ -554,13 +558,98 @@ function sameMeaningNote(w) {
   return n ? `<span class="tag soft">同じ意味の単語が他に${n}語あります（どれでも正解）</span>` : '';
 }
 
+// ---------- 意味クイズ（左に英単語、右の8つの選択肢から日本語の意味を選ぶ） ----------
+function shuffled(a) {
+  const r = a.slice();
+  for (let i = r.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [r[i], r[j]] = [r[j], r[i]]; }
+  return r;
+}
+function matchOptions(w) {
+  const parts = ja => ja.split(/[，、,]/).map(x => x.trim()).filter(Boolean);
+  const mine = new Set(parts(w.ja));
+  const pk = x => (x.pos || '').split('／')[0];
+  const okw = x => x.id !== w.id && x.ja !== w.ja && !parts(x.ja).some(p => mine.has(p));
+  // まぎらわしい選択肢：同じ級・同じ品詞 → 同じ品詞 → 全体 の順に集める
+  const pools = [
+    WORDS.filter(x => x.lv === w.lv && pk(x) === pk(w) && okw(x)),
+    WORDS.filter(x => pk(x) === pk(w) && okw(x)),
+    WORDS.filter(okw)
+  ];
+  const seen = new Set([w.ja]);
+  const chosen = [];
+  for (const pool of pools) {
+    for (const x of shuffled(pool)) {
+      if (seen.has(x.ja)) continue;
+      seen.add(x.ja);
+      chosen.push(x);
+      if (chosen.length >= 7) break;
+    }
+    if (chosen.length >= 7) break;
+  }
+  return shuffled(chosen.map(x => ({ w: x, correct: false })).concat([{ w, correct: true }]));
+}
+function renderQMatch() {
+  const w = cur.word;
+  cur.opts = matchOptions(w);
+  cur.done = false;
+  $('typeArea').innerHTML = '';
+  cardEl.innerHTML = `
+    <div class="match">
+      <div class="match-left">
+        <div class="tag-line"><span class="tag">${esc(w.pos)}</span></div>
+        <div class="match-word">${esc(layoutOf(w.en))}</div>
+        <button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button>
+        <div class="match-hint">意味を右から選んでください</div>
+      </div>
+      <div class="match-right" id="matchOpts">
+        ${cur.opts.map((o, i) => `<button class="opt" data-i="${i}"><span class="opt-n">${i + 1}</span><span class="opt-t">${jaHTML(o.w)}</span></button>`).join('')}
+      </div>
+    </div>
+    <div class="msg" id="msg"></div>`;
+  $('btnSpeak').onclick = () => speakEn(w);
+  $('matchOpts').onclick = ev => {
+    const b = ev.target.closest('button[data-i]');
+    if (b) matchPick(Number(b.dataset.i));
+  };
+}
+function matchPick(i) {
+  if (!cur || cur.phase !== 'q' || !cur.opts || cur.done) return;
+  const o = cur.opts[i];
+  const btn = document.querySelector(`#matchOpts button[data-i="${i}"]`);
+  if (!o || !btn || btn.disabled) return;
+  const msg = $('msg');
+  if (o.correct) {
+    cur.done = true;
+    btn.classList.add('right');
+    document.querySelectorAll('#matchOpts button').forEach(b => { b.disabled = true; });
+    beep(880, 0.12);
+    msg.className = 'msg good';
+    msg.textContent = '正解！';
+    if (!cur.retryAttempt) {
+      if (!cur.practice) applyReview(cur.word.id, !cur.mistake, 'match', false);
+      cur.mistake ? session.ng++ : session.ok++;
+    }
+    updateLearnStats();
+    autoSpeak(cur.word);
+    const me = cur;
+    setTimeout(() => { if (cur === me) goNext(); }, 750);
+  } else {
+    cur.mistake = true;
+    btn.disabled = true;
+    btn.classList.add('wrong');
+    beep(180, 0.18);
+    msg.className = 'msg bad';
+    msg.textContent = 'ちがいます。ほかの選択肢から選び直してください';
+  }
+}
+
 // ---------- タイピング（最初の文字ヒント付き / 完全） ----------
 function fixedCount(n) { return n <= 2 ? 0 : n <= 5 ? 1 : n <= 9 ? 2 : 3; }
 
 function renderQType() {
   const w = cur.word;
   const tgt = lettersOf(w.en);
-  cur.prefixLen = state.settings.mode === 'hint' ? fixedCount(tgt.length) : 0;
+  cur.prefixLen = curMode() === 'hint' ? fixedCount(tgt.length) : 0;
   const pre = tgt.slice(0, cur.prefixLen);
   cur.cands = [w].concat(ALT[w.id].map(i => BY_ID[i])).filter(c => lettersOf(c.en).startsWith(pre));
   cur.active = w;
@@ -668,7 +757,7 @@ function updateTyping() {
 function renderQTap() {
   const w = cur.word;
   const all = lettersOf(w.en).split('');
-  cur.fill = state.settings.mode === 'fill';
+  cur.fill = curMode() === 'fill';
   let L = all;
   if (cur.fill) {
     // 文字埋め：1文字（長い単語は2文字）をランダムに抜く
@@ -769,7 +858,7 @@ function finishQuestion(ok) {
   cur.ok = ok;
   if (!cur.retryAttempt) {
     // 最初の答えだけを記録する（やり直しは記録しない）
-    if (!cur.practice) cur.info = applyReview(cur.word.id, ok, state.settings.mode, cur.hint);
+    if (!cur.practice) cur.info = applyReview(cur.word.id, ok, curMode(), cur.hint);
     ok ? session.ok++ : session.ng++;
   }
   updateLearnStats();
@@ -815,7 +904,7 @@ function renderResult() {
 
 function renderDone() {
   if (session.practiceBatch) {
-    const note = `${MODE_LABEL[state.settings.mode]}おわり：正解 ${session.ok} / ${session.ok + session.ng}`;
+    const note = `${MODE_LABEL[curMode()]}おわり：正解 ${session.ok} / ${session.ok + session.ng}`;
     const rest = session.chainRest || [];
     if (rest.length && session.practiceIds) {
       const ids = session.practiceIds;
@@ -958,7 +1047,7 @@ function normTyped(v, lang) {
 }
 
 const COPY_PATTERN = ['en', 'en', 'en'];   // 1つの単語を打つ順番（3回）。'en'=英語を打つ / 'ja'=日本語を打つ
-const PRACTICE_CHAIN = ['tap', 'fill', 'type'];    // 打ち終わったあと続けて行う練習：並び替え → 文字埋め → 完全タイピング
+const PRACTICE_CHAIN = ['match', 'tap', 'fill', 'type', 'match'];    // 打ち終わったあと続けて行う練習：意味クイズ → 並び替え → 文字埋め → 完全タイピング → 意味クイズ
 
 // ---------- カタカナ表記（発音の見当をつける補助。3回打ちの画面だけに表示） ----------
 // kn は「ア[ッ]プル」の形式。[ ] の中が強く読む場所。
@@ -1044,10 +1133,8 @@ function finishLearn() {
 
 // 覚えた単語の練習。modes の順に、続けて行う
 function startPractice(ids, modes) {
-  state.settings.mode = modes[0];
-  saveState();
   startSession(ids.map(id => ({ id, kind: 'review', practice: true })),
-    { practiceBatch: true, practiceIds: ids, chainRest: modes.slice(1) });
+    { practiceBatch: true, practiceIds: ids, chainRest: modes.slice(1), mode: modes[0] });
 }
 
 function renderCopy() {
@@ -1209,6 +1296,7 @@ function renderChoose(note) {
         : (isNew ? '未学習の単語はありません' : `${CAT_LABEL[cat]}の残りはありません`)}</button>
       <div class="choose-title">この${ids.length}単語を練習する（練習の結果は記録されません）</div>
       <div class="btn-group">
+        <button class="btn-secondary" data-practice="match">意味クイズ</button>
         <button class="btn-secondary" data-practice="tap">並び替え</button>
         <button class="btn-secondary" data-practice="fill">文字埋め</button>
         <button class="btn-secondary" data-practice="hint">最初の文字ヒント＋タイピング</button>
@@ -1630,6 +1718,7 @@ document.addEventListener('click', ev => {
   const b = ev.target.closest('button[data-mode]');
   if (b) {
     state.settings.mode = b.dataset.mode;
+    if (screen === 'quiz' && session.mode) session.mode = b.dataset.mode;
     saveState();
     renderModeChips();
     renderHelp();
@@ -1717,7 +1806,9 @@ document.addEventListener('keydown', ev => {
   } else if (cur.phase === 'result' && ev.key === 'Enter') {
     ev.preventDefault();
     if (cur.ok) goNext(); else retryCurrent();
-  } else if (cur.phase === 'q' && !cur.copy && state.settings.mode === 'card' && tag !== 'INPUT' && tag !== 'SELECT') {
+  } else if (cur.phase === 'q' && cur.opts && /^[1-8]$/.test(ev.key)) {
+    matchPick(Number(ev.key) - 1);
+  } else if (cur.phase === 'q' && !cur.copy && curMode() === 'card' && tag !== 'INPUT' && tag !== 'SELECT') {
     if (ev.code === 'Space') { ev.preventDefault(); revealCard(); }
     else if (ev.code === 'ArrowLeft') cardAnswer(false);
     else if (ev.code === 'ArrowRight') cardAnswer(true);

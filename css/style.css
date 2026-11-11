@@ -392,3 +392,20 @@ rt { font-size: 0.45em; color: #9ca3af; font-weight: normal; letter-spacing: 0; 
 .kn.light .kn-s { font-size: 15px; font-weight: 700; }
 .kn-cap { font-size: 10px; color: #9ca3af; font-weight: normal; }
 .kn-peek { background: none; color: #9ca3af; padding: 0; font-size: 12px; text-decoration: underline; }
+
+/* ===== 意味クイズ（左：英単語／右：8つの選択肢） ===== */
+.match { width: 100%; display: grid; grid-template-columns: 1fr 1.5fr; gap: 20px; align-items: center; text-align: left; }
+.match-left { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.match-word { font-size: 34px; font-weight: bold; word-break: break-word; }
+.match-hint { font-size: 12px; color: var(--sub); }
+.match-right { display: flex; flex-direction: column; gap: 6px; }
+.opt { display: flex; align-items: center; gap: 10px; text-align: left; background: white; color: #111827; border: 2px solid #d1d5db; border-radius: 8px; padding: 4px 12px; font-size: 16px; line-height: 1.9; }
+.opt:hover:not(:disabled) { border-color: var(--primary); background: #eef2ff; opacity: 1; }
+.opt-n { flex: 0 0 22px; height: 22px; border-radius: 50%; background: #e5e7eb; color: #6b7280; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
+.opt.right { border-color: var(--success); background: #f0fdf4; opacity: 1; }
+.opt.wrong { border-color: var(--danger); background: #fef2f2; color: #9ca3af; animation: shake .35s; }
+.opt:disabled:not(.right):not(.wrong) { opacity: .6; }
+@media (max-width: 560px) {
+    .match { grid-template-columns: 1fr; gap: 12px; }
+    .match-word { font-size: 28px; }
+}
