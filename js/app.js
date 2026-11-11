@@ -1,13 +1,18 @@
 'use strict';
-var APP_VERSION = 'v8';
+var APP_VERSION = 'v9';
 
 // ==========================================
 // 定数・記憶モデル
-//   定着率 R = exp(-t / S)   t:最後の学習からの経過時間(時間)  S:記憶の強さ(時間)
+//   ビョーク夫妻の「記憶の二元理論」をもとにした2つの値
+//   ・定着度 B（貯蔵強度）… 覚えたては低く、復習するたびに積み上がる。下がらない
+//   ・思い出しやすさ R（検索強度）… 学習直後は100%、時間とともに下がる  R = exp(-t / S)
+//       t:最後の学習からの経過時間(時間)  S:忘れにくさ(時間)。定着度 B が高いほど S が大きい
 // ==========================================
 const H = 3600000;                 // 1時間(ms)
-const S0 = 24;                     // 初期の記憶の強さ(時間) → 1日後の定着率 約37%
-const THRESH = 0.7;                // この定着率を下回ったら復習対象
+const B0 = 0.12;                   // 1回目の学習直後の定着度（12%からスタート）
+const sOf = B => 12 * Math.exp(5.2 * B);   // 定着度 B のときの「忘れにくさ S」(時間)
+const S0 = sOf(B0);                // 学習直後の S（約22時間）
+const THRESH = 0.7;                // 思い出しやすさがこれを下回ったら復習対象（忘却テスト）
 const STORAGE_KEY = 'kb7_state_v1';
 
 const MODES = [
@@ -119,23 +124,29 @@ function defaultState() {
   return {
     learned: {},                                   // id -> {first, last, S, reviews:[{t, ok, R, S0, S1, mode, hint}]}
     settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low', level: 'all', theme: 'all' },
-    version: 2,
+    version: 3,
     offsetMs: 0,                                   // テスト用の仮想時間
     daily: { date: '', count: 0 }                  // 今日の新規学習数
   };
 }
 // 旧バージョン（7級620語のみ）の学習記録を、新しい単語番号に付け替える
 function migrateState(s) {
-  if (s.version >= 2) return s;
-  const moved = {};
-  Object.keys(s.learned || {}).forEach(k => {
-    const nid = (typeof LEGACY_IDS !== 'undefined') ? LEGACY_IDS[k] : null;
-    if (!nid) return;
-    const rec = s.learned[k];
-    if (!moved[nid] || rec.S > moved[nid].S) moved[nid] = rec;
-  });
-  s.learned = moved;
-  s.version = 2;
+  if (!(s.version >= 2)) {
+    const moved = {};
+    Object.keys(s.learned || {}).forEach(k => {
+      const nid = (typeof LEGACY_IDS !== 'undefined') ? LEGACY_IDS[k] : null;
+      if (!nid) return;
+      const rec = s.learned[k];
+      if (!moved[nid] || rec.S > moved[nid].S) moved[nid] = rec;
+    });
+    s.learned = moved;
+    s.version = 2;
+  }
+  if (s.version < 3) {
+    // 旧モデル（思い出しやすさだけ）の記録から、定着度を計算し直す
+    Object.keys(s.learned || {}).forEach(k => rebuildModel(s.learned[k]));
+    s.version = 3;
+  }
   return s;
 }
 function loadState() {
@@ -169,24 +180,48 @@ function todayNewCount() {
   return state.daily.date === dateKey(now()) ? state.daily.count : 0;
 }
 
+// 定着度 B と 忘れにくさ S の更新
+//   思い出せた：思い出しにくい(Rが低い)ときに思い出せるほど、定着度が大きく上がる（残りの伸びしろの12〜40%）
+//   再学習（打ち直し）：定着度が少し上がる（伸びしろの8%）
+//   忘れた：定着度は下がらない。ただし、次の復習までの間隔は短くなる
+function evolve(B, S, R, kind) {
+  if (kind === 'ok') { const B1 = B + (1 - B) * (0.12 + 0.28 * (1 - R)); return { B1, S1: Math.min(sOf(B1), 24 * 365) }; }
+  if (kind === 'restudy') { const B1 = B + (1 - B) * 0.08; return { B1, S1: Math.max(S, sOf(B1)) }; }
+  return { B1: B, S1: Math.max(S0, S * 0.5) };
+}
+// 古い記録（Bが無い）を、復習の履歴から作り直す
+function rebuildModel(rec) {
+  let B = B0, S = S0;
+  (rec.reviews || []).forEach(rv => {
+    const kind = rv.restudy ? 'restudy' : rv.ok ? 'ok' : 'ng';
+    const e = evolve(B, S, rv.R, kind);
+    rv.B0 = B; rv.B1 = e.B1; rv.S0 = S; rv.S1 = e.S1;
+    B = e.B1; S = e.S1;
+  });
+  rec.B = B; rec.S = S;
+}
+
 // 1回目の学習
 function learnNew(id) {
   const t = now();
-  state.learned[id] = { first: t, last: t, S: S0, reviews: [] };
+  state.learned[id] = { first: t, last: t, B: B0, S: S0, reviews: [] };
   const key = dateKey(t);
   if (state.daily.date !== key) state.daily = { date: key, count: 0 };
   state.daily.count++;
   saveState();
 }
 
-// 再学習（タイピングで打ち直した）: 定着率を100%に戻す。記憶の強さSは変えない
+// 再学習（タイピングで打ち直した）: 思い出しやすさが100%に戻り、定着度が少し上がる
 function restudy(id) {
   const rec = state.learned[id];
   if (!rec) return;
   const t = now();
   const R = retention(rec, t);
-  rec.reviews.push({ t, ok: true, R, S0: rec.S, S1: rec.S, mode: 'copy', hint: false, restudy: true });
+  const e = evolve(rec.B, rec.S, R, 'restudy');
+  rec.reviews.push({ t, ok: true, R, B0: rec.B, B1: e.B1, S0: rec.S, S1: e.S1, mode: 'copy', hint: false, restudy: true });
   rec.last = t;
+  rec.B = e.B1;
+  rec.S = e.S1;
   saveState();
 }
 
@@ -196,20 +231,14 @@ function applyReview(id, ok, mode, hint) {
   if (!rec) return null;
   const t = now();
   const R = retention(rec, t);
-  const sBefore = rec.S;
-  let sAfter;
-  if (ok) {
-    // 思い出しにくい(Rが低い)ときに思い出せるほど大きく伸びる
-    sAfter = sBefore * (1.8 + 1.2 * (1 - R));
-  } else {
-    sAfter = Math.max(S0, sBefore * 0.5);
-  }
-  sAfter = Math.min(sAfter, 24 * 365);
-  rec.reviews.push({ t, ok, R, S0: sBefore, S1: sAfter, mode, hint: !!hint });
+  const bBefore = rec.B, sBefore = rec.S;
+  const e = evolve(bBefore, sBefore, R, ok ? 'ok' : 'ng');
+  rec.reviews.push({ t, ok, R, B0: bBefore, B1: e.B1, S0: sBefore, S1: e.S1, mode, hint: !!hint });
   rec.last = t;
-  rec.S = sAfter;
+  rec.B = e.B1;
+  rec.S = e.S1;
   saveState();
-  return { R, sBefore, sAfter, due: dueTime(rec), t };
+  return { R, bBefore, bAfter: e.B1, sBefore, sAfter: e.S1, due: dueTime(rec), t };
 }
 
 // ==========================================
@@ -331,7 +360,7 @@ const CATS = [
 const CAT_LABEL = {};
 CATS.forEach(c => CAT_LABEL[c.key] = c.label);
 
-// 区分に入る単語の番号。未学習は番号順、学習済みは定着率の低い順
+// 区分に入る単語の番号（区分は定着度 B で分ける）。未学習は番号順、学習済みは定着度の低い順
 function categoryIds(cat, exclude) {
   const tn = now();
   const ex = {};
@@ -342,7 +371,7 @@ function categoryIds(cat, exclude) {
     const rec = state.learned[w.id];
     if (cat === 'new') { if (!rec) rows.push({ id: w.id, R: -1 }); return; }
     if (!rec) return;
-    const R = retention(rec, tn);
+    const R = rec.B;
     const hit = cat === 'low' ? R < 0.5 : cat === 'mid' ? (R >= 0.5 && R < 0.8) : R >= 0.8;
     if (hit) rows.push({ id: w.id, R });
   });
@@ -763,7 +792,7 @@ function renderResult() {
     : cur.retryAttempt ? 'やり直しの結果は記録されません（最初の答えだけを記録しています）。' : '';
   if (info) {
     const dueTxt = info.due - info.t <= 0 ? 'すぐ' : fmtDur(info.due - info.t) + '後';
-    detail = `思い出した時の定着率 <b>${pct(info.R)}%</b><br>
+    detail = `定着度 <b>${pct(info.bBefore)}% → ${pct(info.bAfter)}%</b>${info.bAfter > info.bBefore ? ' ⬆' : '（変わらず）'}　／　その時の思い出しやすさ ${pct(info.R)}%<br>
       次の復習の目安：<b>${dueTxt}</b>（${fmtDate(info.due)}ごろ）`;
   }
   if (!cur.ok) detail += (detail ? '<br>' : '') + '<b>間違えずに答えられるまで、次の単語には進めません。</b>';
@@ -865,7 +894,7 @@ function renderHomeLearn() {
   bindBatchInput(v => { $('btnStartLearn').textContent = label(v); });
 }
 
-// ----- 「復習」タブ：定着率の区分ごとに、タイピングで覚え直す -----
+// ----- 「復習」タブ：定着度の区分ごとに、タイピングで覚え直す -----
 function renderHomeReview() {
   const cat = state.settings.reviewCat;
   const counts = {};
@@ -874,15 +903,15 @@ function renderHomeReview() {
   const label = v => n ? `${CAT_LABEL[cat]}の単語を${Math.min(v, n)}単語、覚える` : `${CAT_LABEL[cat]}の単語はありません`;
   cardEl.innerHTML = `
     <div class="home-sec">
-      <h3>定着率の区分を選んで、タイピングで覚える</h3>
-      <div class="home-sub">いまの定着率で区分けしています。学習済みの単語は、定着率が低い順に出ます。</div>
+      <h3>定着度の区分を選んで、タイピングで覚える</h3>
+      <div class="home-sub">定着度（復習するたびに積み上がる記憶の強さ）で区分けしています。学習済みの単語は、定着度が低い順に出ます。</div>
       <div class="cat-grid">
         ${CATS.map(c => `<button class="cat${cat === c.key ? ' on' : ''}" data-cat="${c.key}"><span class="cat-n">${counts[c.key]}<small>語</small></span><span class="cat-l">${c.label}</span></button>`).join('')}
       </div>
       <div class="home-sub">一度に覚える単語数</div>
       ${batchChooserHTML()}
       <button class="btn-success big" id="btnStartReviewLearn" ${n ? '' : 'disabled'}>${label(state.settings.batchSize)}</button>
-      <div class="home-note">学習済みの単語は、打ち終わると「再学習」として記録され、定着率が100%に戻ります（記憶の強さは変わりません）。そのあと、続けて「並び替え」→「完全タイピング」で練習します。</div>
+      <div class="home-note">学習済みの単語は、打ち終わると「再学習」として記録され、思い出しやすさが100%に戻り、定着度が少し上がります。そのあと、続けて「並び替え」→「完全タイピング」で練習します。</div>
     </div>`;
   $('btnStartReviewLearn').onclick = () => startLearn(categoryIds(cat).slice(0, state.settings.batchSize), cat, []);
   bindBatchInput(v => { $('btnStartReviewLearn').textContent = label(v); });
@@ -896,7 +925,7 @@ function renderHomeTest() {
   cardEl.innerHTML = `
     <div class="home-sec">
       <h3>忘却テスト</h3>
-      <div class="home-sub">忘却曲線で復習の時間が来た単語（定着率70%以下）をテストします。結果は忘却曲線に記録されます。</div>
+      <div class="home-sub">忘れかけた（思い出しやすさが70%以下になった）単語をテストします。思い出せると定着度が積み上がります。結果は記録されます。</div>
       <div class="test-count"><b>${dueN}</b><span>語がテスト対象</span></div>
       ${!dueN && nextDue < Infinity ? `<div class="home-sub">次のテスト対象は ${fmtDur(nextDue - tn)}後（${fmtDate(nextDue)}ごろ、約${nextCount}語）</div>` : ''}
       <div class="home-sub">出題形式</div>
@@ -1141,8 +1170,8 @@ function renderChoose(note) {
   cardEl.innerHTML = `
     <div class="done-title">${ids.length}単語を${isNew ? '覚えました' : '打ち直しました'} 🎉</div>
     <div class="result-info">${note ? esc(note) + '<br>' : ''}${isNew
-      ? `1回目の学習を記録しました。次の復習は約${fmtDur(-Math.log(THRESH) * S0 * H)}後が目安です。`
-      : '再学習として記録しました（定着率が100%に戻りました）。'}</div>
+      ? `1回目の学習を記録しました（定着度 ${pct(B0)}% からスタート）。次の復習は約${fmtDur(-Math.log(THRESH) * S0 * H)}後が目安です。復習するたびに定着度が積み上がります。`
+      : '再学習として記録しました（思い出しやすさが100%に戻り、定着度が少し上がりました）。'}</div>
     <div class="choose">
       <button class="btn-success big" id="chNext" ${nextIds.length ? '' : 'disabled'}>${nextIds.length
         ? `次の${nextIds.length}単語を${isNew ? '覚える' : '打ち直す'}${isNew ? '' : `（${CAT_LABEL[cat]}）`}`
@@ -1169,19 +1198,26 @@ function renderChoose(note) {
 let gFilter = 'all', gSort = 'Rasc', gQuery = '', gLimit = 300;
 const FILTERS = [
   { key: 'all', label: 'すべて' },
-  { key: 'due', label: '要復習(70%以下)' },
-  { key: 'strong', label: '定着(80%以上)' },
+  { key: 'due', label: '忘れかけ（復習の時間）' },
+  { key: 'strong', label: '定着度80%以上' },
   { key: 'new', label: '未学習' }
 ];
 
-function levelOf(R) {
-  if (R >= 0.8) return { cls: 'lv-high', text: 'しっかり定着しています' };
-  if (R >= 0.5) return { cls: 'lv-mid', text: 'まだ覚えていそうです' };
-  if (R >= 0.3) return { cls: 'lv-low', text: '忘れかけています' };
-  return { cls: 'lv-none', text: 'ほぼ忘れていそうです' };
+// 定着度のひとこと
+function levelOf(B) {
+  if (B >= 0.8) return { cls: 'lv-high', text: 'ほぼ定着！ 長く覚えていられる状態です' };
+  if (B >= 0.6) return { cls: 'lv-high', text: 'しっかり定着してきました' };
+  if (B >= 0.3) return { cls: 'lv-mid', text: 'だいぶ覚えてきました。あと少し！' };
+  return { cls: 'lv-start', text: '覚えたて。復習するたびに積み上がります' };
 }
-function colorCls(R) {
-  return R >= 0.8 ? 'lv-high' : R >= 0.5 ? 'lv-mid' : 'lv-low';
+// 思い出しやすさのひとこと
+function retrievalText(R) {
+  if (R >= 0.7) return 'いま思い出せそうです';
+  if (R >= 0.4) return '思い出しにくくなってきました';
+  return '忘れかけています（復習のタイミング）';
+}
+function colorCls(B) {
+  return B >= 0.8 ? 'lv-high' : B >= 0.5 ? 'lv-mid' : 'lv-start';
 }
 
 function renderGraphTab() {
@@ -1190,29 +1226,29 @@ function renderGraphTab() {
   const N = scoped.length || 1;
   const rows = scoped.map(w => {
     const rec = state.learned[w.id];
-    return { w, rec, R: rec ? retention(rec, tn) : null };
+    return { w, rec, R: rec ? retention(rec, tn) : null, B: rec ? rec.B : null };
   });
   const learned = rows.filter(r => r.rec);
-  const sumR = learned.reduce((s, r) => s + r.R, 0);
+  const sumR = learned.reduce((s, r) => s + r.B, 0);
   const avgLearned = learned.length ? sumR / learned.length : 0;
   const overall = sumR / N;
-  const cHigh = learned.filter(r => r.R >= 0.8).length;
-  const cMid = learned.filter(r => r.R >= 0.5 && r.R < 0.8).length;
-  const cLow = learned.filter(r => r.R < 0.5).length;
+  const cHigh = learned.filter(r => r.B >= 0.8).length;
+  const cMid = learned.filter(r => r.B >= 0.5 && r.B < 0.8).length;
+  const cLow = learned.filter(r => r.B < 0.5).length;
   const cNew = scoped.length - learned.length;
   const cDue = learned.filter(r => r.R <= THRESH).length;
 
   $('summary').innerHTML = `
-    <div class="kpi"><div class="kpi-v">${pct(overall)}%</div><div class="kpi-l">${scoped.length}語の定着率</div></div>
-    <div class="kpi"><div class="kpi-v">${learned.length ? pct(avgLearned) + '%' : '-'}</div><div class="kpi-l">学習済み${learned.length}語の平均</div></div>
-    <div class="kpi"><div class="kpi-v">${cDue}</div><div class="kpi-l">復習対象（70%以下）</div></div>`;
+    <div class="kpi"><div class="kpi-v">${pct(overall)}%</div><div class="kpi-l">${scoped.length}語の定着度</div></div>
+    <div class="kpi"><div class="kpi-v">${learned.length ? pct(avgLearned) + '%' : '-'}</div><div class="kpi-l">学習済み${learned.length}語の定着度（平均）</div></div>
+    <div class="kpi"><div class="kpi-v">${cDue}</div><div class="kpi-l">忘れかけ（思い出しやすさ70%以下）</div></div>`;
 
   const seg = (n, cls) => n ? `<i class="${cls}" style="width:${n / N * 100}%"></i>` : '';
-  $('stackbar').innerHTML = seg(cHigh, 'lv-high') + seg(cMid, 'lv-mid') + seg(cLow, 'lv-low') + seg(cNew, 'lv-new');
+  $('stackbar').innerHTML = seg(cHigh, 'lv-high') + seg(cMid, 'lv-mid') + seg(cLow, 'lv-start') + seg(cNew, 'lv-new');
   $('legend').innerHTML = `
     <span><i class="lv-high"></i>80%以上 ${cHigh}語</span>
     <span><i class="lv-mid"></i>50〜80% ${cMid}語</span>
-    <span><i class="lv-low"></i>50%未満 ${cLow}語</span>
+    <span><i class="lv-start"></i>50%未満 ${cLow}語</span>
     <span><i class="lv-new"></i>未学習 ${cNew}語</span>`;
 
   $('gFilter').innerHTML = FILTERS.map(f =>
@@ -1221,21 +1257,21 @@ function renderGraphTab() {
   const q = gQuery.trim().toLowerCase();
   let list = rows.filter(r => {
     if (gFilter === 'due' && !(r.rec && r.R <= THRESH)) return false;
-    if (gFilter === 'strong' && !(r.rec && r.R >= 0.8)) return false;
+    if (gFilter === 'strong' && !(r.rec && r.B >= 0.8)) return false;
     if (gFilter === 'new' && r.rec) return false;
     if (q && !(r.w.en.toLowerCase().includes(q) || r.w.ja.includes(q))) return false;
     return true;
   });
-  const key = r => r.rec ? r.R : 2;   // 未学習は最後
+  const key = r => r.rec ? r.B : 2;   // 未学習は最後
   if (gSort === 'Rasc') list.sort((a, b) => key(a) - key(b) || a.w.id - b.w.id);
-  else if (gSort === 'Rdesc') list.sort((a, b) => (b.rec ? b.R : -1) - (a.rec ? a.R : -1) || a.w.id - b.w.id);
+  else if (gSort === 'Rdesc') list.sort((a, b) => (b.rec ? b.B : -1) - (a.rec ? a.B : -1) || a.w.id - b.w.id);
   else if (gSort === 'due') list.sort((a, b) => (a.rec ? dueTime(a.rec) : Infinity) - (b.rec ? dueTime(b.rec) : Infinity) || a.w.id - b.w.id);
   else list.sort((a, b) => a.w.id - b.w.id);
 
   const shown = list.slice(0, gLimit);
   $('wordList').innerHTML = list.length ? shown.map(r => {
     const bar = r.rec
-      ? `<span class="bar"><i class="${colorCls(r.R)}" style="width:${pct(r.R)}%"></i></span><span class="pc">${pct(r.R)}%</span>`
+      ? `<span class="bar"><i class="${colorCls(r.B)}" style="width:${pct(r.B)}%"></i></span><span class="pc">${pct(r.B)}%</span>`
       : `<span class="bar"></span><span class="pc dim">未学習</span>`;
     return `<div class="row" data-id="${r.w.id}">
       <span class="no">${r.w.id}</span>
@@ -1265,13 +1301,13 @@ function chartSVG(rec, rangeKey) {
   const Y = r => mt + ih * (1 - r);
   let s = '';
 
-  // 横線(定着率)
+  // 横線(%)
   [0, 0.25, 0.5, 0.75, 1].forEach(v => {
     s += `<line class="c-grid" x1="${ml}" x2="${W - mr}" y1="${Y(v)}" y2="${Y(v)}"/>
           <text class="c-ylab" x="${ml - 8}" y="${Y(v) + 4}" text-anchor="end">${v * 100}%</text>`;
   });
   s += `<line class="c-thresh" x1="${ml}" x2="${W - mr}" y1="${Y(THRESH)}" y2="${Y(THRESH)}"/>
-        <text class="c-thlab" x="${W - mr - 4}" y="${Y(THRESH) - 5}" text-anchor="end">復習ライン 70%</text>`;
+        <text class="c-thlab" x="${W - mr - 4}" y="${Y(THRESH) - 5}" text-anchor="end">復習ライン（思い出しやすさ70%）</text>`;
 
   // 横軸(最初の学習からの経過時間)
   const steps = [1, 2, 3, 6, 12, 24, 48, 72, 168, 336, 720, 1440, 2160];
@@ -1287,7 +1323,38 @@ function chartSVG(rec, rangeKey) {
           <text class="c-xsub" x="${x}" y="${Y(0) + 33}" text-anchor="middle">${sub}</text>`;
   }
 
-  // 区間ごとの曲線（復習のたびに100%に戻り、記憶の強さSに応じて緩やかになる）
+  // ① 定着度（積み上がる）：復習のたびに階段状に上がる
+  const bPts = [{ t: rec.first, B: B0 }];
+  rec.reviews.forEach(rv => bPts.push({ t: rv.t, B: rv.B1 != null ? rv.B1 : rec.B, from: rv.B0 != null ? rv.B0 : B0 }));
+  const bPath = (ta, tb) => {
+    // ta〜tb の範囲の階段グラフ
+    let d = '', curB = B0, started = false;
+    const put = (t, b) => { d += (started ? 'L' : 'M') + X(t).toFixed(1) + ',' + Y(b).toFixed(1); started = true; };
+    bPts.forEach((p, i) => {
+      if (i === 0) { curB = p.B; if (p.t >= ta && p.t <= tb) put(p.t, curB); return; }
+      if (p.t > tb) return;
+      if (p.t >= ta) { if (!started) put(ta, curB); put(p.t, curB); put(p.t, p.B); }
+      curB = p.B;
+    });
+    if (!started) put(ta, curB);
+    put(tb, curB);
+    return d;
+  };
+  const pastEndB = Math.min(tn, tEnd);
+  const dPast = bPath(t0, pastEndB);
+  s += `<path class="c-barea" d="${dPast} L${X(pastEndB).toFixed(1)},${Y(0)} L${X(t0).toFixed(1)},${Y(0)} Z"/>`;
+  s += `<path class="c-bline" d="${dPast}"/>`;
+  if (tEnd > tn) s += `<path class="c-bline future" d="${bPath(tn, tEnd)}"/>`;
+  // 定着度の数字（見やすい間隔でだけ表示）
+  let lastLabX = -999;
+  bPts.forEach((p, i) => {
+    if (p.t > tEnd) return;
+    const x = X(p.t);
+    s += `<circle class="c-bdot" cx="${x}" cy="${Y(p.B)}" r="4"><title>${i === 0 ? '1回目の学習' : (i + 1) + '回目'} ${fmtDate(p.t)}／定着度 ${pct(p.B)}%</title></circle>`;
+    if (x - lastLabX > 34) { s += `<text class="c-blab" x="${x + 5}" y="${Y(p.B) - 7}">${pct(p.B)}%</text>`; lastLabX = x; }
+  });
+
+  // ② 思い出しやすさ（時間で下がる）：復習のたびに100%に戻り、定着度が高いほどゆっくり下がる
   const segs = [];
   let start = rec.first, S = S0;
   rec.reviews.forEach(rv => { segs.push({ a: start, b: rv.t, S }); start = rv.t; S = rv.S1; });
@@ -1312,13 +1379,13 @@ function chartSVG(rec, rangeKey) {
     if (b > fs) s += `<path class="c-line future" d="${pathOf(seg, fs, b)}"/>`;
   });
 
-  // 復習した時点（思い出した時の定着率）
+  // 復習した時点（思い出した時の思い出しやすさ）
   rec.reviews.forEach((rv, i) => {
     if (rv.t > tEnd) return;
     const x = X(rv.t);
     s += `<line class="c-drop" x1="${x}" x2="${x}" y1="${Y(rv.R)}" y2="${Y(1)}"/>
           <circle class="c-dot ${rv.ok ? 'ok' : 'ng'}" cx="${x}" cy="${Y(rv.R)}" r="5.5">
-            <title>${i + 2}回目 ${fmtDate(rv.t)}／その時の定着率 ${pct(rv.R)}%／${rv.restudy ? '再学習（タイピング）' : rv.ok ? '思い出せた' : '忘れた'}</title></circle>`;
+            <title>${i + 2}回目 ${fmtDate(rv.t)}／その時の思い出しやすさ ${pct(rv.R)}%／${rv.restudy ? '再学習（タイピング）' : rv.ok ? '思い出せた' : '忘れた'}</title></circle>`;
   });
   // 1回目の学習
   s += `<circle class="c-dot first" cx="${X(t0)}" cy="${Y(1)}" r="5.5"><title>1回目の学習 ${fmtDate(t0)}</title></circle>`;
@@ -1331,15 +1398,17 @@ function chartSVG(rec, rangeKey) {
 
   // 現在
   if (tn <= tEnd) {
-    const x = X(tn), R = retention(rec, tn), y = Y(R);
-    const right = x > W - 150;
-    const ly = y < mt + 30 ? y + 24 : y - 12;
+    const x = X(tn), R = retention(rec, tn), B = rec.B;
+    const right = x > W - 190;
+    const tx = x + (right ? -10 : 10);
     s += `<line class="c-now" x1="${x}" x2="${x}" y1="${mt}" y2="${Y(0)}"/>
-          <circle class="c-nowdot" cx="${x}" cy="${y}" r="6.5"/>
-          <text class="c-nowlab" x="${x + (right ? -10 : 10)}" y="${ly}" text-anchor="${right ? 'end' : 'start'}">いま ${pct(R)}%</text>`;
+          <circle class="c-nowdot" cx="${x}" cy="${Y(R)}" r="6.5"/>
+          <circle class="c-nowdotb" cx="${x}" cy="${Y(B)}" r="6.5"/>
+          <text class="c-nowlab b" x="${tx}" y="${mt + 14}" text-anchor="${right ? 'end' : 'start'}">いま 定着度 ${pct(B)}%</text>
+          <text class="c-nowlab r" x="${tx}" y="${mt + 32}" text-anchor="${right ? 'end' : 'start'}">思い出しやすさ ${pct(R)}%</text>`;
   }
 
-  return `<svg class="chart" viewBox="0 0 ${W} ${HT}" role="img" aria-label="忘却曲線">${s}</svg>`;
+  return `<svg class="chart" viewBox="0 0 ${W} ${HT}" role="img" aria-label="定着度と思い出しやすさのグラフ">${s}</svg>`;
 }
 
 function openDetail(id) {
@@ -1369,7 +1438,7 @@ function renderDetail() {
 
   if (!rec) {
     $('modalBody').innerHTML = head + `
-      <div class="d-empty">この単語はまだ学習していません。<br>学習すると、ここに忘却曲線が表示されます。</div>
+      <div class="d-empty">この単語はまだ学習していません。<br>学習すると、ここに定着度と思い出しやすさのグラフが表示されます。</div>
       <div class="btn-group"><button class="btn-primary" id="dStudy">今すぐ学習する</button></div>`;
     $('dSpeak').onclick = () => speakEn(w);
     $('dStudy').onclick = () => { closeDetail(); switchTab('learn'); startLearn([w.id], 'new', []); };
@@ -1378,44 +1447,49 @@ function renderDetail() {
 
   const tn = now();
   const R = retention(rec, tn);
-  const lv = levelOf(R);
+  const B = rec.B;
+  const lv = levelOf(B);
   const due = dueTime(rec);
   const dueTxt = due <= tn ? 'いま復習のタイミングです' : `${fmtDur(due - tn)}後（${fmtDate(due)}ごろ）`;
 
   const rangeChips = Object.keys(RANGES).map(k =>
     `<button class="chip small${detailRange === k ? ' on' : ''}" data-range="${k}">${RANGE_LABEL[k]}</button>`).join('');
 
-  let hist = `<tr><td>1</td><td>${fmtDate(rec.first)}</td><td>—</td><td>—</td><td>初回の学習</td></tr>`;
+  let hist = `<tr><td>1</td><td>${fmtDate(rec.first)}</td><td>—</td><td>—</td><td>${pct(B0)}%</td><td>初回の学習</td></tr>`;
   rec.reviews.forEach((rv, i) => {
     const prev = i === 0 ? rec.first : rec.reviews[i - 1].t;
     hist += `<tr><td>${i + 2}</td><td>${fmtDate(rv.t)}</td><td>${fmtDur(rv.t - prev)}後</td><td>${pct(rv.R)}%</td>
+      <td>${rv.B0 != null ? pct(rv.B0) + '% → <b>' + pct(rv.B1) + '%</b>' : '—'}</td>
       <td class="${rv.ok ? 'ok' : 'ng'}">${rv.restudy ? '再学習' : rv.ok ? '○' : '×'}${rv.hint ? '（ヒントあり）' : ''} <span class="dim">${esc(MODE_LABEL[rv.mode] || rv.mode)}</span></td></tr>`;
   });
 
   $('modalBody').innerHTML = head + `
     <div class="d-level ${lv.cls}">
-      <div class="d-pct">${pct(R)}%</div>
-      <div><div class="d-lvl-t">現在の定着率</div><div class="d-lvl-s">${lv.text}</div></div>
+      <div class="d-pct">${pct(B)}%</div>
+      <div><div class="d-lvl-t">定着度（復習するたびに積み上がります）</div><div class="d-lvl-s">${lv.text}</div></div>
     </div>
+    <div class="d-retr"><span>いまの思い出しやすさ</span><b>${pct(R)}%</b><span class="dim">${retrievalText(R)}</span></div>
     <div class="d-facts">
       <div><span>次の復習の目安</span><b>${dueTxt}</b></div>
-      <div><span>記憶の強さ S</span><b>${rec.S < 48 ? (Math.round(rec.S * 10) / 10) + '時間' : (Math.round(rec.S / 24 * 10) / 10) + '日'}</b></div>
+      <div><span>思い出しやすさが70%に下がるまで</span><b>${fmtDur(-Math.log(THRESH) * rec.S * H)}</b></div>
       <div><span>学習回数</span><b>${rec.reviews.length + 1}回（復習${rec.reviews.length}回）</b></div>
     </div>
     <div class="d-range"><span>表示範囲</span>${rangeChips}</div>
     ${chartSVG(rec, detailRange)}
     <div class="chart-legend">
+      <span><i class="ln g"></i>定着度（積み上がる）</span>
+      <span><i class="ln"></i>思い出しやすさ（時間で下がる）</span>
       <span><i class="dot first"></i>初回の学習</span>
       <span><i class="dot ok"></i>思い出せた／再学習</span>
       <span><i class="dot ng"></i>忘れた</span>
       <span><i class="dia"></i>次回復習の目安</span>
-      <span><i class="ln"></i>実線＝これまで／破線＝今後の予測</span>
+      <span>実線＝これまで／破線＝今後の予測</span>
     </div>
     <div class="table-wrap"><table class="hist">
-      <thead><tr><th>回</th><th>日時</th><th>前回から</th><th>想起時の定着率</th><th>結果</th></tr></thead>
+      <thead><tr><th>回</th><th>日時</th><th>前回から</th><th>その時の思い出しやすさ</th><th>定着度の変化</th><th>結果</th></tr></thead>
       <tbody>${hist}</tbody></table></div>
     <div class="btn-group"><button class="btn-primary" id="dReview">今すぐこの単語を復習する</button></div>
-    <div class="note-small">※エビングハウスの忘却曲線をもとにした推定値です。</div>`;
+    <div class="note-small">※定着度は「記憶の二元理論」（ビョーク夫妻）、思い出しやすさはエビングハウスの忘却曲線をもとにした推定値です。</div>`;
   $('dSpeak').onclick = () => speakEn(w);
   $('dReview').onclick = () => { closeDetail(); switchTab('test'); startSession([{ id: w.id, kind: 'review' }]); };
 }

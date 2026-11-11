@@ -364,3 +364,19 @@ rt { font-size: 0.45em; color: #9ca3af; font-weight: normal; letter-spacing: 0; 
 .rep-dot.done { background: var(--success); color: white; }
 .rep-dot.now { background: var(--primary); color: white; box-shadow: 0 0 0 4px rgba(79,70,229,.25); }
 .rep-sub { font-size: 12px; color: var(--sub); }
+
+/* ===== 定着度（積み上がる）と思い出しやすさ（下がる） ===== */
+.lv-start { background: #6366f1; }
+.c-barea { fill: rgba(22,163,74,.16); stroke: none; }
+.c-bline { fill: none; stroke: #16a34a; stroke-width: 3.2; stroke-linejoin: round; }
+.c-bline.future { stroke-dasharray: 6 5; opacity: .6; }
+.c-bdot { fill: #16a34a; stroke: white; stroke-width: 1.5; }
+.c-blab { fill: #15803d; font-size: 11px; font-weight: bold; }
+.c-nowdotb { fill: #16a34a; stroke: white; stroke-width: 2; }
+.c-nowlab { font-size: 13px; font-weight: bold; }
+.c-nowlab.b { fill: #15803d; }
+.c-nowlab.r { fill: #4f46e5; }
+.c-line { stroke-width: 2; opacity: .85; }
+.d-retr { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; padding: 8px 14px; margin-bottom: 10px; background: #eef2ff; border-radius: 8px; font-size: 14px; color: #3730a3; }
+.d-retr b { font-size: 20px; }
+.chart-legend .ln.g { border-top: 3px solid #16a34a; }

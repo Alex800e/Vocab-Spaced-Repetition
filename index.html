@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>忘却曲線 英単語学習（英検7級）</title>
-    <link rel="stylesheet" href="css/style.css?v=8">
+    <link rel="stylesheet" href="css/style.css?v=9">
 </head>
 <body>
 
 <div class="container">
     <div id="loadError" class="load-error" hidden></div>
-    <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v8</small></h1>
+    <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v9</small></h1>
 
     <nav class="tabs">
         <button class="tab active" data-tab="learn">学習</button>
@@ -44,8 +44,8 @@
         <div class="filters">
             <input id="gQuery" type="search" placeholder="単語・意味で検索">
             <select id="gSort">
-                <option value="Rasc">定着率が低い順</option>
-                <option value="Rdesc">定着率が高い順</option>
+                <option value="Rasc">定着度が低い順</option>
+                <option value="Rdesc">定着度が高い順</option>
                 <option value="due">次の復習が近い順</option>
                 <option value="id">番号順</option>
             </select>
@@ -54,16 +54,20 @@
         <div class="wordlist" id="wordList"></div>
 
         <details class="note">
-            <summary>定着率の計算方法</summary>
-            <p>エビングハウスの忘却曲線をもとにした簡易モデルです。定着率 R = e<sup>−t / S</sup>（t：最後の学習からの経過時間、S：記憶の強さ）。</p>
+            <summary>定着度と思い出しやすさの考え方</summary>
+            <p>記憶の強さを、性質の違う2つの値で表しています（ビョーク夫妻の「記憶の二元理論」をもとにした簡易モデルです）。</p>
             <ul>
-                <li>1回目の学習直後は S = 24時間（1日後の定着率 約37%）。</li>
-                <li>思い出せた：S がのび、次の復習までの間隔が広がります。早めに思い出せるほど（定着率が低いときに思い出せるほど）よくのびます。</li>
-                <li>忘れた・ヒントを使った・つづりを間違えた：S が半分になります（最小24時間）。</li>
-                <li>定着率が70%を下回った単語が「忘却テスト」の対象になります。</li>
-                <li>「復習」タブでタイピングを打ち直した単語は「再学習」として記録され、定着率が100%に戻ります（S は変わりません）。</li>
+                <li><b>定着度</b>（貯蔵強度）：脳にどれだけ深く刻まれたか。1回目の学習直後は12%と低く、<b>復習で思い出せるたびに積み上がります</b>。時間がたっても下がりません。</li>
+                <li><b>思い出しやすさ</b>（検索強度）：いますぐ思い出せる度合い。学習した直後は100%で、時間とともに下がります（エビングハウスの忘却曲線）。定着度が高い単語ほど、ゆっくり下がります。</li>
             </ul>
-            <p>実際の記憶を測定した値ではなく、目安の推定値です。</p>
+            <ul>
+                <li>思い出せたとき：定着度が上がります。忘れかけた（思い出しやすさが低い）ときに思い出せるほど、大きく上がります。</li>
+                <li>忘れた・ヒントを使った：定着度は下がりませんが、次の復習までの間隔が短くなります。</li>
+                <li>思い出しやすさが70%を下回った単語が、「忘却テスト」の対象になります。</li>
+                <li>「復習」タブで打ち直すと「再学習」として記録され、思い出しやすさが100%に戻り、定着度が少し上がります。</li>
+                <li>「定着度」で分けた区分（50%未満など）は、「復習」タブの区分と同じです。</li>
+            </ul>
+            <p>実際の記憶を測った値ではなく、目安の推定値です。</p>
         </details>
     </section>
 </div>
@@ -114,24 +118,24 @@ var WORDS_LV = {};
 var __errs = [];
 window.addEventListener("error", function (e) { __errs.push((e.message || "") + (e.filename ? " (" + e.filename.split("/").slice(-2).join("/") + ")" : "")); });
 </script>
-<script src="js/data/words_7.js?v=8"></script>
-<script src="js/data/words_6.js?v=8"></script>
-<script src="js/data/words_5.js?v=8"></script>
-<script src="js/data/words_4.js?v=8"></script>
-<script src="js/data/words_3.js?v=8"></script>
-<script src="js/data/words_p2.js?v=8"></script>
-<script src="js/data/words_2.js?v=8"></script>
-<script src="js/data/words_p1.js?v=8"></script>
-<script src="js/data/words_1.js?v=8"></script>
-<script src="js/data/legacy.js?v=8"></script>
-<script src="js/app.js?v=8"></script>
+<script src="js/data/words_7.js?v=9"></script>
+<script src="js/data/words_6.js?v=9"></script>
+<script src="js/data/words_5.js?v=9"></script>
+<script src="js/data/words_4.js?v=9"></script>
+<script src="js/data/words_3.js?v=9"></script>
+<script src="js/data/words_p2.js?v=9"></script>
+<script src="js/data/words_2.js?v=9"></script>
+<script src="js/data/words_p1.js?v=9"></script>
+<script src="js/data/words_1.js?v=9"></script>
+<script src="js/data/legacy.js?v=9"></script>
+<script src="js/app.js?v=9"></script>
 <script>
 // ファイルの置き忘れ・古いファイルが混ざっているときに、画面に原因を表示する
 (function () {
   var msg = "";
   var wordsOk = false;
   try { wordsOk = typeof WORDS !== "undefined" && WORDS.length > 0; } catch (e) {}
-  if (typeof APP_VERSION === "undefined" || APP_VERSION !== "v8") {
+  if (typeof APP_VERSION === "undefined" || APP_VERSION !== "v9") {
     msg = "js/app.js が古い、または見つかりません。zipの中身（js・css・index.html）をすべて新しいものに上書きしてください。";
   } else if (!wordsOk) {
     msg = "単語データが読み込めていません。js/data フォルダ（words_7.js など10ファイル）が、フォルダごとアップロードされているか確認してください。";
