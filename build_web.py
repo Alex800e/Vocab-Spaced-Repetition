@@ -37,6 +37,7 @@ for lv, name in LV:
     for w in rows:
         o = {'id':w['id'],'en':w['en'],'ja':w['ja'],'pos':w.get('pos',''),'th':w.get('th','other')}
         if w.get('rb'): o['rb'] = w['rb']
+        if w.get('kn'): o['kn'] = w['kn']
         lines.append(' ' + json.dumps(o, ensure_ascii=False, separators=(',',':')) + ',')
     open(f'{HERE}/js/data/words_{lv}.js','w',encoding='utf-8').write(
         f'// {name}の英単語（{len(rows)}語） ※build_web.py で自動生成\nWORDS_LV[{json.dumps(lv)}]=[\n' + '\n'.join(lines) + '\n];\n')

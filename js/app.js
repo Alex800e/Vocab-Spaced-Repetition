@@ -1,5 +1,5 @@
 'use strict';
-var APP_VERSION = 'v9';
+var APP_VERSION = 'v10';
 
 // ==========================================
 // 定数・記憶モデル
@@ -123,7 +123,7 @@ function dateKey(t) {
 function defaultState() {
   return {
     learned: {},                                   // id -> {first, last, S, reviews:[{t, ok, R, S0, S1, mode, hint}]}
-    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low', level: 'all', theme: 'all' },
+    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low', level: 'all', theme: 'all', kana: 'grad' },
     version: 3,
     offsetMs: 0,                                   // テスト用の仮想時間
     daily: { date: '', count: 0 }                  // 今日の新規学習数
@@ -960,6 +960,36 @@ function normTyped(v, lang) {
 const COPY_PATTERN = ['en', 'en', 'en'];   // 1つの単語を打つ順番（3回）。'en'=英語を打つ / 'ja'=日本語を打つ
 const PRACTICE_CHAIN = ['tap', 'fill', 'type'];    // 打ち終わったあと続けて行う練習：並び替え → 文字埋め → 完全タイピング
 
+// ---------- カタカナ表記（発音の見当をつける補助。3回打ちの画面だけに表示） ----------
+// kn は「ア[ッ]プル」の形式。[ ] の中が強く読む場所。
+//   卒業モード：1回目＝しっかり表示 → 2回目＝うすく小さく → 3回目＝隠す（ボタンで見られる）
+//   定着度が50%以上の単語は、最初から隠す
+function knLevel(w) {
+  const mode = state.settings.kana;
+  if (!w.kn || mode === 'off') return 'none';
+  if (mode === 'always') return 'full';
+  const rec = state.learned[w.id];
+  if (rec && rec.B >= 0.5) return 'hidden';
+  const last = COPY_PATTERN.length - 1;
+  return learn.rep === 0 ? 'full' : learn.rep < last ? 'light' : 'hidden';
+}
+function knHTML(kn) {
+  return kn.split(' ').map(word => {
+    let html = '';
+    for (const ch of word) {
+      if (ch === '[') html += '<b class="kn-s">';
+      else if (ch === ']') html += '</b>';
+      else html += esc(ch);
+    }
+    return `<span class="kn-w">${html}</span>`;
+  }).join(' ');
+}
+function knBlock(w, level) {
+  if (level === 'none') return '';
+  if (level === 'hidden') return `<div class="kn-box" id="knBox"><button class="kn-peek" id="knPeek">カタカナを見る</button></div>`;
+  return `<div class="kn-box" id="knBox"><div class="kn ${level}">${knHTML(w.kn)}</div>${level === 'full' ? '<div class="kn-cap">大きい字を強く読みます</div>' : ''}</div>`;
+}
+
 function startLearn(ids, cat, series) {
   if (!ids.length) return;
   learn = { ids: ids.slice(), queue: ids.slice(), idx: 0, rep: 0, wordMissed: false, missed: [], retry: false, cat: cat || 'new', series: series || [] };
@@ -1040,10 +1070,11 @@ function renderCopy() {
     <div class="tag-line"><span class="tag new">${stageTxt}</span>${learn.retry ? '<span class="tag soft">やり直し</span>' : ''}</div>
     <div class="info-rows">
       <div class="irow"><span class="il">品詞</span><span class="iv">${esc(w.pos)}</span></div>
-      <div class="irow"><span class="il">英語</span><span class="iv en${lang === 'en' ? ' target' : ''}">${esc(layoutOf(w.en))}<button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button></span></div>
+      <div class="irow"><span class="il">英語</span><span class="iv en${lang === 'en' ? ' target' : ''}"><span class="en-line"><span class="en-word">${esc(layoutOf(w.en))}</span><button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button></span>${knBlock(w, knLevel(w))}</span></div>
       <div class="irow"><span class="il">日本語</span><span class="iv ja${lang === 'ja' ? ' target' : ''}">${jaHtml}</span></div>
     </div>`;
   $('btnSpeak').onclick = () => speakEn(w);
+  if ($('knPeek')) $('knPeek').onclick = () => { $('knBox').innerHTML = `<div class="kn light">${knHTML(w.kn)}</div>`; };
 
   $('typeArea').innerHTML = `
     <div class="type-label">${lang === 'en' ? '↑ 上の英語を打ってください' : '↑ 上の日本語を打ってください（日本語入力をオンにして、変換したら Enter で確定）'}</div>
@@ -1570,6 +1601,7 @@ function resetAll() {
 function refreshAll() {
   renderScopeBar();
   $('jaFirst').checked = !!state.settings.jaFirstOnly;
+  $('kanaMode').value = state.settings.kana || 'grad';
   $('soundOn').checked = !!state.settings.sound;
   renderTimeNow();
   renderHome();
@@ -1654,6 +1686,7 @@ $('jaFirst').addEventListener('change', ev => {
   state.settings.jaFirstOnly = ev.target.checked;
   saveState();
 });
+$('kanaMode').addEventListener('change', ev => { state.settings.kana = ev.target.value; saveState(); });
 $('soundOn').addEventListener('change', ev => { state.settings.sound = ev.target.checked; saveState(); });
 $('btnExport').addEventListener('click', exportData);
 $('btnImport').addEventListener('click', () => $('importFile').click());

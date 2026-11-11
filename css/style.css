@@ -380,3 +380,15 @@ rt { font-size: 0.45em; color: #9ca3af; font-weight: normal; letter-spacing: 0; 
 .d-retr { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; padding: 8px 14px; margin-bottom: 10px; background: #eef2ff; border-radius: 8px; font-size: 14px; color: #3730a3; }
 .d-retr b { font-size: 20px; }
 .chart-legend .ln.g { border-top: 3px solid #16a34a; }
+
+/* ===== カタカナ表記（英単語の下に小さく／強く読む所だけ大きく太く） ===== */
+.iv.en { flex-direction: column; align-items: flex-start; gap: 2px; }
+.en-line { display: flex; align-items: center; gap: 8px; }
+.kn-box { line-height: 1.5; }
+.kn { font-size: 12px; font-weight: normal; color: #6b7280; letter-spacing: .03em; }
+.kn .kn-s { font-size: 19px; font-weight: 800; color: var(--primary); }
+.kn-w { white-space: nowrap; }
+.kn.light { opacity: .55; }
+.kn.light .kn-s { font-size: 15px; font-weight: 700; }
+.kn-cap { font-size: 10px; color: #9ca3af; font-weight: normal; }
+.kn-peek { background: none; color: #9ca3af; padding: 0; font-size: 12px; text-decoration: underline; }
