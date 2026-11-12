@@ -111,6 +111,7 @@ def word_kana(phones, spelling=''):
         kana += ext
         # 強く読む、語頭以外の開音節 AE（banana → ナー）
         if vp == 'AE' and vs == '1' and not co and si > 0 and not (si + 1 < len(syls) and syls[si + 1]['on'] == []): kana += 'ー'
+        had_r = bool(co and co[0] == 'R')
         # 母音 + R
         if co and co[0] == 'R' and vp != 'ER':
             add = {'AA': 'ー', 'AO': 'ー', 'EH': 'ア', 'IH': 'ア', 'IY': 'ア', 'UH': 'ア', 'UW': 'ア', 'AH': 'ー', 'AY': 'ア', 'AW': 'ア', 'EY': 'ア', 'OW': 'ー', 'OY': 'ア'}.get(vp, 'ー')
@@ -122,7 +123,7 @@ def word_kana(phones, spelling=''):
         for ci, c in enumerate(co):
             nxt = co[ci + 1] if ci + 1 < len(co) else None
             if c == 'M' and nxt in ('P', 'B'): kana += 'ン'; continue
-            if c in STOP and vp in SHORT and ci == 0 and (last_syl or nxt is not None) and not gem:
+            if c in STOP and vp in SHORT and ci == 0 and not had_r and (last_syl or nxt is not None) and not gem:
                 if last_syl or c in ('K', 'P', 'T', 'G', 'B', 'D') and nxt is None: kana += 'ッ'; gem = True
             if c == 'N' and nxt is None: kana += 'ン'; continue
             if c == 'NG' and (nxt in ('K', 'G') or (si + 1 < len(syls) and syls[si + 1]['on'] and syls[si + 1]['on'][0] in ('G', 'K'))): kana += 'ン'; continue

@@ -1,5 +1,5 @@
 'use strict';
-var APP_VERSION = 'v11';
+var APP_VERSION = 'v12';
 
 // ==========================================
 // 定数・記憶モデル
@@ -50,12 +50,25 @@ WORDS.sort((a, b) => a.id - b.id);
 const BY_ID = {};
 WORDS.forEach(w => BY_ID[w.id] = w);
 
+// 本（js/data/book_○○.js）：学習する単語・フレーズ（entries）と本文（lines）
+const BOOKS = (typeof BOOKS_DATA !== 'undefined') ? BOOKS_DATA : [];
+const BOOK_WORDS = {};
+BOOKS.forEach(b => {
+  b.entries.forEach(e => { e.bk = b.id; BY_ID[e.id] = e; });
+  BOOK_WORDS[b.id] = b.entries.slice().sort((x, y) => x.id - y.id);
+});
+
 // 同じ意味(日本語)を持つ単語。タイピングではどちらを答えても正解にする
 const ALT = {};
 (function () {
   const byJa = {};
   WORDS.forEach(w => (byJa[w.ja] = byJa[w.ja] || []).push(w.id));
   WORDS.forEach(w => ALT[w.id] = byJa[w.ja].filter(i => i !== w.id).slice(0, 6));
+  BOOKS.forEach(b => {
+    const bj = {};
+    b.entries.forEach(e => (bj[e.ja] = bj[e.ja] || []).push(e.id));
+    b.entries.forEach(e => ALT[e.id] = bj[e.ja].filter(i => i !== e.id));
+  });
 })();
 
 // ==========================================
@@ -124,7 +137,7 @@ function dateKey(t) {
 function defaultState() {
   return {
     learned: {},                                   // id -> {first, last, S, reviews:[{t, ok, R, S0, S1, mode, hint}]}
-    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low', level: 'all', theme: 'all', kana: 'grad' },
+    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low', level: 'all', theme: 'all', kana: 'grad', home: 'words', book: (BOOKS[0] && BOOKS[0].id) || '' },
     version: 3,
     offsetMs: 0,                                   // テスト用の仮想時間
     daily: { date: '', count: 0 }                  // 今日の新規学習数
@@ -329,9 +342,16 @@ function buildQueue() {
   return due;
 }
 
-// ---------- 学習する範囲（級・テーマ） ----------
+// ---------- 表示モード：'words'＝忘却曲線 英単語 ／ 'book'＝本 ----------
+let viewMode = (state.settings.home === 'book' && BOOKS.length) ? 'book' : 'words';
+const baseList = () => viewMode === 'book' ? (BOOK_WORDS[state.settings.book] || []) : WORDS;
+const curBook = () => BOOKS.find(b => b.id === state.settings.book) || null;
+
+// ---------- 学習する範囲（級・テーマ／本） ----------
 function inScope(w) {
   const st = state.settings;
+  if (viewMode === 'book') return w.bk === st.book;
+  if (w.bk) return false;
   return (st.level === 'all' || w.lv === st.level) && (st.theme === 'all' || w.th === st.theme);
 }
 const scopeCount = (lv, th) => WORDS.reduce((n, w) => n + ((lv === 'all' || w.lv === lv) && (th === 'all' || w.th === th) ? 1 : 0), 0);
@@ -343,6 +363,15 @@ function scopeLabel() {
 }
 function renderScopeBar() {
   const st = state.settings;
+  const book = viewMode === 'book';
+  $('lblLevel').hidden = book; $('lblTheme').hidden = book; $('lblBook').hidden = !book; $('btnStory').hidden = !book;
+  $('modeSwitch').classList.toggle('on', book);
+  document.body.classList.toggle('book-mode', book);
+  if (book) {
+    $('scopeBook').innerHTML = BOOKS.map(b => `<option value="${esc(b.id)}">${esc(b.title)}（${b.entries.length}件）</option>`).join('');
+    $('scopeBook').value = st.book;
+    return;
+  }
   $('scopeLevel').innerHTML = `<option value="all">すべての級（${WORDS.length}語）</option>` +
     LEVELS.map(l => `<option value="${l[0]}">${l[1]}（${scopeCount(l[0], 'all')}語）</option>`).join('');
   $('scopeLevel').value = st.level;
@@ -367,7 +396,7 @@ function categoryIds(cat, exclude) {
   const ex = {};
   (exclude || []).forEach(i => ex[i] = true);
   const rows = [];
-  WORDS.forEach(w => {
+  baseList().forEach(w => {
     if (ex[w.id] || !inScope(w)) return;
     const rec = state.learned[w.id];
     if (cat === 'new') { if (!rec) rows.push({ id: w.id, R: -1 }); return; }
@@ -445,7 +474,7 @@ function updateLearnStats() {
     learnedN++;
     if (retention(state.learned[k], tn) <= THRESH) due++;
   });
-  const total = scopeCount(state.settings.level, state.settings.theme);
+  const total = viewMode === 'book' ? baseList().length : scopeCount(state.settings.level, state.settings.theme);
   let prog = '';
   if (screen === 'quiz' && session.total) prog = `　進行 ${Math.min(session.i + 1, session.total)} / ${session.total}`;
   if (screen === 'learn' && learn) prog = `　単語 ${Math.min(learn.idx + 1, learn.queue.length)} / ${learn.queue.length}　${Math.min(learn.rep + 1, COPY_PATTERN.length)}回目 / ${COPY_PATTERN.length}${learn.retry ? '（やり直し）' : ''}`;
@@ -570,7 +599,12 @@ function matchOptions(w) {
   const pk = x => (x.pos || '').split('／')[0];
   const okw = x => x.id !== w.id && x.ja !== w.ja && !parts(x.ja).some(p => mine.has(p));
   // まぎらわしい選択肢：同じ級・同じ品詞 → 同じ品詞 → 全体 の順に集める
-  const pools = [
+  const pools = w.bk ? [
+    BOOK_WORDS[w.bk].filter(x => pk(x) === pk(w) && okw(x)),
+    BOOK_WORDS[w.bk].filter(okw),
+    WORDS.filter(x => pk(x) === pk(w) && okw(x)),
+    WORDS.filter(okw)
+  ] : [
     WORDS.filter(x => x.lv === w.lv && pk(x) === pk(w) && okw(x)),
     WORDS.filter(x => pk(x) === pk(w) && okw(x)),
     WORDS.filter(okw)
@@ -600,6 +634,7 @@ function renderQMatch() {
         <div class="match-word">${esc(layoutOf(w.en))}</div>
         <button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button>
         <div class="match-hint">意味を右から選んでください</div>
+        ${ctxHTML(w).replace(/<div class="ctx-ja">.*?<\/div>/, '')}
       </div>
       <div class="match-right" id="matchOpts">
         ${cur.opts.map((o, i) => `<button class="opt" data-i="${i}"><span class="opt-n">${i + 1}</span><span class="opt-t">${jaHTML(o.w)}</span></button>`).join('')}
@@ -973,7 +1008,7 @@ function renderHomeLearn() {
   const label = n => unl ? `${Math.min(n, unl)}単語を覚える` : '全単語を学習済みです';
   cardEl.innerHTML = `
     <div class="home-sec">
-      <h3>新しい単語を覚える（タイピング）</h3>
+      <h3>${viewMode === 'book' ? '本の単語・フレーズを覚える（タイピング）' : '新しい単語を覚える（タイピング）'}</h3>
       <div class="home-sub">未学習 ${unl}語 ／ 一度に覚える単語数を選んでください</div>
       ${batchChooserHTML()}
       <button class="btn-success big" id="btnStartLearn" ${unl ? '' : 'disabled'}>${label(state.settings.batchSize)}</button>
@@ -1073,6 +1108,16 @@ function knHTML(kn) {
     return `<span class="kn-w">${html}</span>`;
   }).join(' ');
 }
+// 本の単語・フレーズが出てくる文（本文）
+function ctxHTML(w) {
+  const b = w.bk ? BOOKS.find(x => x.id === w.bk) : null;
+  if (!b || !w.ctx || !w.ctx.length) return '';
+  const ln = b.lines[w.ctx[0].l];
+  if (!ln) return '';
+  const surf = esc(w.ctx[0].s);
+  const en = esc(ln.en).replace(surf, `<mark>${surf}</mark>`);
+  return `<div class="ctx"><div class="ctx-t">本文</div><div class="ctx-en">${en}</div><div class="ctx-ja">${esc(ln.ja)}</div></div>`;
+}
 function knBlock(w, level) {
   if (level === 'none') return '';
   if (level === 'hidden') return `<div class="kn-box" id="knBox"><button class="kn-peek" id="knPeek">カタカナを見る</button></div>`;
@@ -1159,7 +1204,7 @@ function renderCopy() {
       <div class="irow"><span class="il">品詞</span><span class="iv">${esc(w.pos)}</span></div>
       <div class="irow"><span class="il">英語</span><span class="iv en${lang === 'en' ? ' target' : ''}"><span class="en-line"><span class="en-word">${esc(layoutOf(w.en))}</span><button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button></span>${knBlock(w, knLevel(w))}</span></div>
       <div class="irow"><span class="il">日本語</span><span class="iv ja${lang === 'ja' ? ' target' : ''}">${jaHtml}</span></div>
-    </div>`;
+    </div>${ctxHTML(w)}`;
   $('btnSpeak').onclick = () => speakEn(w);
   if ($('knPeek')) $('knPeek').onclick = () => { $('knBox').innerHTML = `<div class="kn light">${knHTML(w.kn)}</div>`; };
 
@@ -1341,7 +1386,7 @@ function colorCls(B) {
 
 function renderGraphTab() {
   const tn = now();
-  const scoped = WORDS.filter(inScope);
+  const scoped = baseList().filter(inScope);
   const N = scoped.length || 1;
   const rows = scoped.map(w => {
     const rec = state.learned[w.id];
@@ -1393,7 +1438,7 @@ function renderGraphTab() {
       ? `<span class="bar"><i class="${colorCls(r.B)}" style="width:${pct(r.B)}%"></i></span><span class="pc">${pct(r.B)}%</span>`
       : `<span class="bar"></span><span class="pc dim">未学習</span>`;
     return `<div class="row" data-id="${r.w.id}">
-      <span class="no">${r.w.id}</span>
+      <span class="no">${r.w.no || r.w.id}</span>
       <span class="en">${esc(layoutOf(r.w.en))}</span>
       <span class="ja">${esc(r.w.ja)}</span>${bar}</div>`;
   }).join('') + (list.length > gLimit ? `<button class="btn-secondary more-btn" id="gMore">さらに表示（残り${list.length - gLimit}語）</button>` : '')
@@ -1530,6 +1575,17 @@ function chartSVG(rec, rangeKey) {
   return `<svg class="chart" viewBox="0 0 ${W} ${HT}" role="img" aria-label="定着度と思い出しやすさのグラフ">${s}</svg>`;
 }
 
+function openStory() {
+  const b = curBook();
+  if (!b) return;
+  detailId = null;
+  $('modalBody').innerHTML = `
+    <div class="story-title">${esc(b.title)} <small>${esc(b.titleJa || '')}</small></div>
+    <div class="story-note">${esc(b.note || '')}</div>
+    <div class="story-lines">${b.lines.map((l, i) => `<div class="story-line"><span class="story-n">${i + 1}</span><div><div class="story-en">${esc(l.en)}</div><div class="story-ja">${esc(l.ja)}</div></div></div>`).join('')}</div>`;
+  $('modal').hidden = false;
+  document.body.classList.add('modal-open');
+}
 function openDetail(id) {
   detailId = id;
   renderDetail();
@@ -1553,7 +1609,7 @@ function renderDetail() {
       <button class="btn-audio" id="dSpeak" aria-label="発音">🔊</button>
       <span class="tag">${esc(w.pos)}</span>
     </div>
-    <div class="d-ja">#${w.id}　${jaHTML(w)}</div>`;
+    <div class="d-ja">#${w.no || w.id}　${jaHTML(w)}</div>${ctxHTML(w)}`;
 
   if (!rec) {
     $('modalBody').innerHTML = head + `
@@ -1690,6 +1746,7 @@ function refreshAll() {
   renderScopeBar();
   $('jaFirst').checked = !!state.settings.jaFirstOnly;
   $('kanaMode').value = state.settings.kana || 'grad';
+  $('homePage').value = state.settings.home || 'words';
   $('soundOn').checked = !!state.settings.sound;
   renderTimeNow();
   renderHome();
@@ -1701,6 +1758,26 @@ function refreshAll() {
 // ==========================================
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 
+function setView(v) {
+  if (v === viewMode || (v === 'book' && !BOOKS.length)) return;
+  if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。ページを切り替えますか？')) return;
+  viewMode = v;
+  gLimit = 300;
+  renderScopeBar();
+  if (!$('tab-graph').hidden) renderGraphTab();
+  else renderHome();
+}
+$('modeSwitch').addEventListener('click', () => setView(viewMode === 'book' ? 'words' : 'book'));
+$('scopeBook').addEventListener('change', ev => {
+  if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。本を切り替えますか？')) { renderScopeBar(); return; }
+  state.settings.book = ev.target.value;
+  saveState();
+  gLimit = 300;
+  renderScopeBar();
+  if (!$('tab-graph').hidden) renderGraphTab(); else renderHome();
+});
+$('btnStory').addEventListener('click', openStory);
+$('homePage').addEventListener('change', ev => { state.settings.home = ev.target.value; saveState(); });
 function onScopeChange(level, theme) {
   if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。範囲を変えますか？')) { renderScopeBar(); return; }
   state.settings.level = level;

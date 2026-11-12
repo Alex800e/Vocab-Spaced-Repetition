@@ -409,3 +409,26 @@ rt { font-size: 0.45em; color: #9ca3af; font-weight: normal; letter-spacing: 0; 
     .match { grid-template-columns: 1fr; gap: 12px; }
     .match-word { font-size: 28px; }
 }
+
+/* ===== 本モード ===== */
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.head h1 { flex: 1; margin: 0; text-align: center; }
+.mode-switch { flex: 0 0 auto; background: #e5e7eb; color: #374151; padding: 8px 12px; border-radius: 999px; font-weight: bold; font-size: 14px; }
+.mode-switch.on { background: #b45309; color: white; box-shadow: 0 0 0 3px rgba(180,83,9,.25); }
+body.book-mode { background: #fdf6e9; }
+body.book-mode .scope { background: #fbecd0; }
+body.book-mode .tab.active { color: #b45309; border-bottom-color: #b45309; }
+.story-btn { flex: 0 0 auto; padding: 7px 12px; font-size: 13px; }
+.ctx { width: 100%; max-width: 460px; margin: 10px auto 0; padding: 8px 12px; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 6px; text-align: left; }
+.ctx-t { font-size: 11px; color: #b45309; font-weight: bold; }
+.ctx-en { font-size: 15px; line-height: 1.6; color: #1f2937; }
+.ctx-en mark { background: #fde68a; color: inherit; padding: 0 2px; border-radius: 3px; font-weight: bold; }
+.ctx-ja { font-size: 12px; color: #6b7280; }
+.match-left .ctx { margin-top: 6px; font-size: 13px; }
+.story-title { font-size: 22px; font-weight: bold; padding-right: 40px; }
+.story-title small { font-size: 14px; color: var(--sub); font-weight: normal; }
+.story-note { font-size: 12px; color: var(--sub); margin: 4px 0 12px; }
+.story-line { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f1f2f4; }
+.story-n { flex: 0 0 24px; color: #b45309; font-weight: bold; font-size: 13px; padding-top: 3px; }
+.story-en { font-size: 17px; line-height: 1.6; }
+.story-ja { font-size: 13px; color: #6b7280; }

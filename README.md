@@ -9,6 +9,9 @@ index.html をブラウザで開くと使えます（インターネット接続
 - data/txt/○級英単語.txt … 元のtxtと同じ形式（#, 英語, 日本語, 品詞）で書き出したもの
 - data/theme_overrides.tsv … テーマの手動修正
 - build_web.py … words_master.json から js/data と data/txt を作り直すスクリプト
+- data/books/○○.json … 本のデータ（本文と、学習する単語・フレーズ）
+- build_books.py … data/books の内容から js/data/book_○○.js を作り直すスクリプト
+- make_kana.py … カタカナ表記を作るスクリプト（data/kana_overrides.tsv で手動修正）
 
 ## 単語の追加・修正
 1. data/words_master.json を編集（追加方法は build_web.py の冒頭に書いてあります）
@@ -22,3 +25,11 @@ index.html をブラウザで開くと使えます（インターネット接続
 - 品詞が空だった3,433語は、辞書データから推定した値です。
 - テーマは、辞書データと日本語の意味から自動で分けたものです。ずれている語は theme_overrides.tsv で直せます。
 - ふりがなは、3〜6級は元データの読みを使い、そのほかは辞書ソフトで自動生成しました（読み違いが残っている可能性があります）。
+
+## 本（The Three Little Pigs）
+- 画面左上の「📖 本」スイッチで、本のページと「忘却曲線 英単語」のページを切り替えます。
+- 設定の「最初に開くページ」で、起動時に開くページを選べます。
+- 本ごとに「学習」「復習」「忘却テスト」「定着度グラフ」があり、記録は本の単語・フレーズだけで管理されます（級・テーマの記録とは別です）。
+- 本文は、昔話「3びきのこぶた」を学習用にやさしい英語で書いた再話です。
+- 意味が1語ずつでは分からない表現（once upon a time／huff and puff／run away など15個）は、フレーズとして学習します。
+- 本を足すには、data/books/ に同じ形式のJSONを置いて python3 build_books.py を実行し、index.html に js/data/book_○○.js の読み込みを1行足します。
