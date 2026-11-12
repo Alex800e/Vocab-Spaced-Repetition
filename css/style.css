@@ -432,3 +432,9 @@ body.book-mode .tab.active { color: #b45309; border-bottom-color: #b45309; }
 .story-n { flex: 0 0 24px; color: #b45309; font-weight: bold; font-size: 13px; padding-top: 3px; }
 .story-en { font-size: 17px; line-height: 1.6; }
 .story-ja { font-size: 13px; color: #6b7280; }
+
+/* ===== 音声 ===== */
+.speak-notice { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: min(92vw, 520px); background: #1f2937; color: white; padding: 12px 16px; border-radius: 10px; font-size: 13px; line-height: 1.6; z-index: 80; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+.speak-notice[hidden] { display: none; }
+.speech-test { margin: 12px 0; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.speech-info { font-size: 13px; color: #374151; line-height: 1.8; background: #f9fafb; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; width: 100%; }

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>忘却曲線 英単語学習（英検7級）</title>
-    <link rel="stylesheet" href="css/style.css?v=13">
+    <link rel="stylesheet" href="css/style.css?v=14">
 </head>
 <body>
 
@@ -12,7 +12,7 @@
     <div id="loadError" class="load-error" hidden></div>
     <div class="head">
         <button class="mode-switch" id="modeSwitch" title="本で英単語を学ぶ">📖 本</button>
-        <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v13</small></h1>
+        <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v14</small></h1>
     </div>
 
     <nav class="tabs">
@@ -91,6 +91,13 @@
                     <option value="book">本</option>
                 </select>
             </label>
+            <label>音声の再生方法
+                <select id="voiceMode">
+                    <option value="auto">自動（おすすめ）</option>
+                    <option value="online">インターネット音声を優先</option>
+                    <option value="device">端末の音声のみ</option>
+                </select>
+            </label>
             <label>カタカナ表記（3回打ちの画面）
                 <select id="kanaMode">
                     <option value="grad">だんだん減らす（おすすめ）</option>
@@ -98,6 +105,11 @@
                     <option value="off">表示しない</option>
                 </select>
             </label>
+        </div>
+
+        <div class="speech-test">
+            <button class="btn-secondary" id="btnSpeechTest">🔊 音声のテスト</button>
+            <div class="speech-info" id="speechInfo">発音が鳴らないときは、このボタンで原因を調べられます。</div>
         </div>
 
         <div class="backup-section">
@@ -137,25 +149,25 @@ var BOOKS_DATA = [];
 var __errs = [];
 window.addEventListener("error", function (e) { __errs.push((e.message || "") + (e.filename ? " (" + e.filename.split("/").slice(-2).join("/") + ")" : "")); });
 </script>
-<script src="js/data/words_7.js?v=13"></script>
-<script src="js/data/words_6.js?v=13"></script>
-<script src="js/data/words_5.js?v=13"></script>
-<script src="js/data/words_4.js?v=13"></script>
-<script src="js/data/words_3.js?v=13"></script>
-<script src="js/data/words_p2.js?v=13"></script>
-<script src="js/data/words_2.js?v=13"></script>
-<script src="js/data/words_p1.js?v=13"></script>
-<script src="js/data/words_1.js?v=13"></script>
-<script src="js/data/legacy.js?v=13"></script>
-<script src="js/data/book_pigs.js?v=13"></script>
-<script src="js/app.js?v=13"></script>
+<script src="js/data/words_7.js?v=14"></script>
+<script src="js/data/words_6.js?v=14"></script>
+<script src="js/data/words_5.js?v=14"></script>
+<script src="js/data/words_4.js?v=14"></script>
+<script src="js/data/words_3.js?v=14"></script>
+<script src="js/data/words_p2.js?v=14"></script>
+<script src="js/data/words_2.js?v=14"></script>
+<script src="js/data/words_p1.js?v=14"></script>
+<script src="js/data/words_1.js?v=14"></script>
+<script src="js/data/legacy.js?v=14"></script>
+<script src="js/data/book_pigs.js?v=14"></script>
+<script src="js/app.js?v=14"></script>
 <script>
 // ファイルの置き忘れ・古いファイルが混ざっているときに、画面に原因を表示する
 (function () {
   var msg = "";
   var wordsOk = false;
   try { wordsOk = typeof WORDS !== "undefined" && WORDS.length > 0; } catch (e) {}
-  if (typeof APP_VERSION === "undefined" || APP_VERSION !== "v13") {
+  if (typeof APP_VERSION === "undefined" || APP_VERSION !== "v14") {
     msg = "js/app.js が古い、または見つかりません。zipの中身（js・css・index.html）をすべて新しいものに上書きしてください。";
   } else if (!wordsOk) {
     msg = "単語データが読み込めていません。js/data フォルダ（words_7.js など10ファイル）が、フォルダごとアップロードされているか確認してください。";

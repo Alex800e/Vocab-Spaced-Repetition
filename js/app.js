@@ -1,5 +1,5 @@
 'use strict';
-var APP_VERSION = 'v13';
+var APP_VERSION = 'v14';
 
 // ==========================================
 // 定数・記憶モデル
@@ -137,7 +137,7 @@ function dateKey(t) {
 function defaultState() {
   return {
     learned: {},                                   // id -> {first, last, S, reviews:[{t, ok, R, S0, S1, mode, hint}]}
-    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low', level: 'all', theme: 'all', kana: 'grad', home: 'words', book: (BOOKS[0] && BOOKS[0].id) || '' },
+    settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low', level: 'all', theme: 'all', kana: 'grad', voiceMode: 'auto', home: 'words', book: (BOOKS[0] && BOOKS[0].id) || '' },
     version: 3,
     offsetMs: 0,                                   // テスト用の仮想時間
     daily: { date: '', count: 0 }                  // 今日の新規学習数
@@ -280,10 +280,25 @@ function getEnglishCandidates() {
   };
   return en.slice().sort((a, b) => score(a) - score(b));
 }
-function speakWord(text, attempt = 0) {
-  if (!('speechSynthesis' in window)) return;
+// ---------- 発音の再生 ----------
+// ① 端末の読み上げ機能（speechSynthesis）で読む
+// ② 端末の読み上げが使えないとき（Fireタブレットなど）は、インターネット上の発音音声（api.dictionaryapi.dev）で代用する
+const ttsBroken = () => { try { return localStorage.getItem('kb7_tts') === 'broken'; } catch (e) { return false; } };
+const setTtsState = v => { try { localStorage.setItem('kb7_tts', v); } catch (e) { /* 保存できなくても続行 */ } };
+let speakToken = 0;       // 最新の再生だけを有効にする
+let activeAudio = null;
+const audioMem = {};
+function stopAudio() {
+  if (activeAudio) { try { activeAudio.pause(); } catch (e) { /* ignore */ } activeAudio = null; }
+}
+
+// 端末の音声で読む。done(true/false) を1回だけ呼ぶ
+function deviceSpeak(text, token, done, attempt) {
+  attempt = attempt || 0;
   const synth = window.speechSynthesis;
-  synth.cancel();
+  let finished = false;
+  const finish = ok => { if (finished) return; finished = true; clearTimeout(timer); done(ok); };
+  try { synth.cancel(); } catch (e) { /* ignore */ }
   const candidates = getEnglishCandidates();
   const voice = candidates[attempt] || null;
   const u = new SpeechSynthesisUtterance(text);
@@ -291,17 +306,126 @@ function speakWord(text, attempt = 0) {
   u.rate = 0.9;
   u.volume = 1;
   if (voice) { u.voice = voice; u.lang = voice.lang; }
-  u.onstart = () => { if (voice) localStorage.setItem('kb7_voice', voice.name); };
+  u.onstart = () => { if (voice) localStorage.setItem('kb7_voice', voice.name); finish(true); };
   u.onerror = e => {
     if (e.error === 'canceled' || e.error === 'interrupted') return;
     if (voice && localStorage.getItem('kb7_voice') === voice.name) localStorage.removeItem('kb7_voice');
-    if (voice && attempt + 1 <= candidates.length) speakWord(text, attempt + 1);
+    if (finished) return;
+    if (voice && attempt + 1 < candidates.length && token === speakToken) { finished = true; clearTimeout(timer); deviceSpeak(text, token, done, attempt + 1); return; }
+    finish(false);
   };
+  // 一定時間たっても読み始めなければ、端末の音声は使えないと判断する
+  const timer = setTimeout(() => finish(!!synth.speaking), 1800);
   currentUtterance = u;
-  setTimeout(() => { synth.resume(); synth.speak(u); }, 80);
+  setTimeout(() => { try { synth.resume(); synth.speak(u); } catch (e) { finish(false); } }, 80);
 }
-function speakEn(w) { speakWord(layoutOf(w.en)); }
-function autoSpeak(w) { if (userActed) speakEn(w); }
+
+// インターネット音声
+async function audioUrlFor(word, noCache) {
+  const key = word.toLowerCase().replace(/'.*$/, '');
+  if (!key) return '';
+  if (!noCache && audioMem[key] !== undefined) return audioMem[key];
+  let store = {};
+  try { store = JSON.parse(localStorage.getItem('kb7_audio') || '{}'); } catch (e) { store = {}; }
+  if (!noCache && store[key]) { audioMem[key] = store[key]; return store[key]; }
+  const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const timer = setTimeout(() => { if (ctl) ctl.abort(); }, 7000);
+  let url = '';
+  try {
+    const res = await fetch('https://api.dictionaryapi.dev/v2/entries/en/' + encodeURIComponent(key), ctl ? { signal: ctl.signal } : undefined);
+    if (res.ok) {
+      const data = await res.json();
+      const list = [].concat(...(Array.isArray(data) ? data : []).map(d => d.phonetics || [])).map(p => p.audio).filter(Boolean);
+      url = list.find(u => /-us\./.test(u)) || list[0] || '';
+    }
+  } catch (e) { url = ''; }
+  clearTimeout(timer);
+  audioMem[key] = url;
+  if (url) { store[key] = url; try { localStorage.setItem('kb7_audio', JSON.stringify(store)); } catch (e) { /* ignore */ } }
+  return url;
+}
+function playUrl(url) {
+  return new Promise(resolve => {
+    try {
+      const a = new Audio(url);
+      activeAudio = a;
+      a.onended = a.onerror = () => resolve();
+      const p = a.play();
+      if (p && p.catch) p.catch(() => resolve());
+    } catch (e) { resolve(); }
+  });
+}
+async function playOnlineAudio(text, token, manual) {
+  const words = (text.match(/[A-Za-z][A-Za-z']*/g) || []).slice(0, 10);
+  let played = 0;
+  for (const w of words) {
+    if (token !== speakToken) return;
+    let url = '';
+    try { url = await audioUrlFor(w); } catch (e) { url = ''; }
+    if (token !== speakToken) return;
+    if (url) { played++; await playUrl(url); }
+  }
+  if (!played && manual && token === speakToken) {
+    showSpeakNotice('発音の音声を再生できませんでした。インターネット接続と、端末の音量を確認してください。（設定の「音声のテスト」で原因を調べられます）');
+  }
+}
+let noticeTimer = null;
+function showSpeakNotice(msg) {
+  let el = document.getElementById('speakNotice');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'speakNotice';
+    el.className = 'speak-notice';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { el.hidden = true; }, 8000);
+}
+
+function speakWord(text, opts) {
+  const o = opts || {};
+  const token = ++speakToken;
+  stopAudio();
+  const mode = state.settings.voiceMode || 'auto';          // auto / device / online
+  const hasSynth = 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
+  if (mode === 'online' || (mode === 'auto' && (!hasSynth || ttsBroken()))) { playOnlineAudio(text, token, o.manual); return; }
+  if (!hasSynth) { if (o.manual) showSpeakNotice('この端末のブラウザは、読み上げに対応していません。'); return; }
+  deviceSpeak(text, token, ok => {
+    if (token !== speakToken) return;
+    if (ok) { if (ttsBroken()) setTtsState('ok'); return; }
+    if (mode === 'auto') { setTtsState('broken'); playOnlineAudio(text, token, o.manual); }
+    else if (o.manual) showSpeakNotice('端末の音声で読み上げられませんでした。設定の「音声の再生方法」を「自動」にしてください。');
+  });
+}
+function speakEn(w, manual) { speakWord(layoutOf(w.en), { manual: !!manual }); }
+function autoSpeak(w) { if (userActed) speakEn(w, false); }
+
+// 設定の「音声のテスト」：原因を画面に表示する
+async function runSpeechTest() {
+  const el = $('speechInfo');
+  el.textContent = 'テスト中…（「apple」と読みます）';
+  const lines = [];
+  const has = 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
+  refreshVoices();
+  const en = cachedVoices.filter(v => v.lang && v.lang.toLowerCase().startsWith('en'));
+  lines.push(`端末の読み上げ機能：${has ? 'あり' : 'なし'}`);
+  lines.push(`読み上げ音声：全${cachedVoices.length}個（英語 ${en.length}個）`);
+  let devOk = false;
+  if (has) devOk = await new Promise(res => deviceSpeak('apple', ++speakToken, res));
+  lines.push(`端末の音声での再生：${devOk ? 'できました' : 'できませんでした'}`);
+  setTtsState(devOk ? 'ok' : 'broken');
+  let advice = '端末の音声が使えます。このまま使えます。';
+  if (!devOk) {
+    let url = '';
+    try { url = await audioUrlFor('apple', true); } catch (e) { url = ''; }
+    lines.push(`インターネット音声：${url ? '取得できました（これから再生します）' : '取得できませんでした'}`);
+    if (url) { advice = '端末の音声は使えませんが、インターネット音声で発音を聞けます（「自動」のままでOK）。音が出ない場合は、端末の音量と、ブラウザのサイト設定の「サウンド」を確認してください。'; await playUrl(url); }
+    else advice = '端末の音声もインターネット音声も使えませんでした。インターネット接続・端末の音量・ブラウザのサイト設定（サウンド）を確認してください。';
+  }
+  el.innerHTML = lines.map(esc).join('<br>') + `<br><b>${esc(advice)}</b>`;
+}
 
 let actx = null;
 function beep(freq, dur) {
@@ -540,7 +664,7 @@ function renderQCard() {
         : `<button class="btn-primary" id="btnReveal">英語を見る [Space]</button>`}
     </div>`;
   if (cur.revealed) {
-    $('btnSpeak').onclick = () => speakEn(w);
+    $('btnSpeak').onclick = () => speakEn(w, true);
     $('btnNg').onclick = () => cardAnswer(false);
     $('btnOk').onclick = () => cardAnswer(true);
   } else {
@@ -641,7 +765,7 @@ function renderQMatch() {
       </div>
     </div>
     <div class="msg" id="msg"></div>`;
-  $('btnSpeak').onclick = () => speakEn(w);
+  $('btnSpeak').onclick = () => speakEn(w, true);
   $('matchOpts').onclick = ev => {
     const b = ev.target.closest('button[data-i]');
     if (b) matchPick(Number(b.dataset.i));
@@ -932,7 +1056,7 @@ function renderResult() {
       <button class="btn-secondary" id="btnGraph">忘却曲線を見る</button>
       <button class="btn-primary" id="btnNext">${cur.ok ? '次へ [Enter]' : 'もう一度 [Enter]'}</button>
     </div>`;
-  $('btnSpeak').onclick = () => speakEn(w);
+  $('btnSpeak').onclick = () => speakEn(w, true);
   $('btnGraph').onclick = () => openDetail(w.id);
   $('btnNext').onclick = cur.ok ? goNext : retryCurrent;
 }
@@ -1205,7 +1329,7 @@ function renderCopy() {
       <div class="irow"><span class="il">英語</span><span class="iv en${lang === 'en' ? ' target' : ''}"><span class="en-line"><span class="en-word">${esc(layoutOf(w.en))}</span><button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button></span>${knBlock(w, knLevel(w))}</span></div>
       <div class="irow"><span class="il">日本語</span><span class="iv ja${lang === 'ja' ? ' target' : ''}">${jaHtml}</span></div>
     </div>${ctxHTML(w)}`;
-  $('btnSpeak').onclick = () => speakEn(w);
+  $('btnSpeak').onclick = () => speakEn(w, true);
   if ($('knPeek')) $('knPeek').onclick = () => { $('knBox').innerHTML = `<div class="kn light">${knHTML(w.kn)}</div>`; };
 
   $('typeArea').innerHTML = `
@@ -1615,7 +1739,7 @@ function renderDetail() {
     $('modalBody').innerHTML = head + `
       <div class="d-empty">この単語はまだ学習していません。<br>学習すると、ここに定着度と思い出しやすさのグラフが表示されます。</div>
       <div class="btn-group"><button class="btn-primary" id="dStudy">今すぐ学習する</button></div>`;
-    $('dSpeak').onclick = () => speakEn(w);
+    $('dSpeak').onclick = () => speakEn(w, true);
     $('dStudy').onclick = () => { closeDetail(); switchTab('learn'); startLearn([w.id], 'new', []); };
     return;
   }
@@ -1665,7 +1789,7 @@ function renderDetail() {
       <tbody>${hist}</tbody></table></div>
     <div class="btn-group"><button class="btn-primary" id="dReview">今すぐこの単語を復習する</button></div>
     <div class="note-small">※定着度は「記憶の二元理論」（ビョーク夫妻）、思い出しやすさはエビングハウスの忘却曲線をもとにした推定値です。</div>`;
-  $('dSpeak').onclick = () => speakEn(w);
+  $('dSpeak').onclick = () => speakEn(w, true);
   $('dReview').onclick = () => { closeDetail(); switchTab('test'); startSession([{ id: w.id, kind: 'review' }]); };
 }
 
@@ -1747,6 +1871,7 @@ function refreshAll() {
   $('jaFirst').checked = !!state.settings.jaFirstOnly;
   $('kanaMode').value = state.settings.kana || 'grad';
   $('homePage').value = state.settings.home || 'words';
+  $('voiceMode').value = state.settings.voiceMode || 'auto';
   $('soundOn').checked = !!state.settings.sound;
   renderTimeNow();
   renderHome();
@@ -1852,6 +1977,8 @@ $('jaFirst').addEventListener('change', ev => {
   state.settings.jaFirstOnly = ev.target.checked;
   saveState();
 });
+$('voiceMode').addEventListener('change', ev => { state.settings.voiceMode = ev.target.value; saveState(); });
+$('btnSpeechTest').addEventListener('click', runSpeechTest);
 $('kanaMode').addEventListener('change', ev => { state.settings.kana = ev.target.value; saveState(); });
 $('soundOn').addEventListener('change', ev => { state.settings.sound = ev.target.checked; saveState(); });
 $('btnExport').addEventListener('click', exportData);
