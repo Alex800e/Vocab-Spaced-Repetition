@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>忘却曲線 英単語学習（英検7級）</title>
-    <link rel="stylesheet" href="css/style.css?v=14">
+    <link rel="stylesheet" href="css/style.css?v=16">
 </head>
 <body>
 
@@ -12,7 +12,7 @@
     <div id="loadError" class="load-error" hidden></div>
     <div class="head">
         <button class="mode-switch" id="modeSwitch" title="本で英単語を学ぶ">📖 本</button>
-        <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v14</small></h1>
+        <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v16</small></h1>
     </div>
 
     <nav class="tabs">
@@ -149,25 +149,25 @@ var BOOKS_DATA = [];
 var __errs = [];
 window.addEventListener("error", function (e) { __errs.push((e.message || "") + (e.filename ? " (" + e.filename.split("/").slice(-2).join("/") + ")" : "")); });
 </script>
-<script src="js/data/words_7.js?v=14"></script>
-<script src="js/data/words_6.js?v=14"></script>
-<script src="js/data/words_5.js?v=14"></script>
-<script src="js/data/words_4.js?v=14"></script>
-<script src="js/data/words_3.js?v=14"></script>
-<script src="js/data/words_p2.js?v=14"></script>
-<script src="js/data/words_2.js?v=14"></script>
-<script src="js/data/words_p1.js?v=14"></script>
-<script src="js/data/words_1.js?v=14"></script>
-<script src="js/data/legacy.js?v=14"></script>
-<script src="js/data/book_pigs.js?v=14"></script>
-<script src="js/app.js?v=14"></script>
+<script src="js/data/words_7.js?v=16"></script>
+<script src="js/data/words_6.js?v=16"></script>
+<script src="js/data/words_5.js?v=16"></script>
+<script src="js/data/words_4.js?v=16"></script>
+<script src="js/data/words_3.js?v=16"></script>
+<script src="js/data/words_p2.js?v=16"></script>
+<script src="js/data/words_2.js?v=16"></script>
+<script src="js/data/words_p1.js?v=16"></script>
+<script src="js/data/words_1.js?v=16"></script>
+<script src="js/data/legacy.js?v=16"></script>
+<script src="js/data/book_pigs.js?v=16"></script>
+<script src="js/app.js?v=16"></script>
 <script>
 // ファイルの置き忘れ・古いファイルが混ざっているときに、画面に原因を表示する
 (function () {
   var msg = "";
   var wordsOk = false;
   try { wordsOk = typeof WORDS !== "undefined" && WORDS.length > 0; } catch (e) {}
-  if (typeof APP_VERSION === "undefined" || APP_VERSION !== "v14") {
+  if (typeof APP_VERSION === "undefined" || APP_VERSION !== "v16") {
     msg = "js/app.js が古い、または見つかりません。zipの中身（js・css・index.html）をすべて新しいものに上書きしてください。";
   } else if (!wordsOk) {
     msg = "単語データが読み込めていません。js/data フォルダ（words_7.js など10ファイル）が、フォルダごとアップロードされているか確認してください。";

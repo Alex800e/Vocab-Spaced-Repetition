@@ -438,3 +438,9 @@ body.book-mode .tab.active { color: #b45309; border-bottom-color: #b45309; }
 .speak-notice[hidden] { display: none; }
 .speech-test { margin: 12px 0; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .speech-info { font-size: 13px; color: #374151; line-height: 1.8; background: #f9fafb; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; width: 100%; }
+
+.sp-q { margin-top: 6px; line-height: 2; }
+.sp-q button { margin: 4px 6px 0 0; padding: 8px 16px; font-size: 15px; }
+.sp-end { margin-top: 8px; padding: 8px 10px; border-radius: 6px; font-weight: bold; }
+.sp-end.good { background: #f0fdf4; color: #166534; }
+.sp-end.bad { background: #fef2f2; color: #991b1b; }

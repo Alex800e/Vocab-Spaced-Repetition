@@ -1,5 +1,5 @@
 'use strict';
-var APP_VERSION = 'v14';
+var APP_VERSION = 'v16';
 
 // ==========================================
 // 定数・記憶モデル
@@ -57,6 +57,20 @@ BOOKS.forEach(b => {
   b.entries.forEach(e => { e.bk = b.id; BY_ID[e.id] = e; });
   BOOK_WORDS[b.id] = b.entries.slice().sort((x, y) => x.id - y.id);
 });
+
+// 同じ英単語が「本」と「忘却曲線 英単語」の両方にあるとき、学習記録を共有する
+//   TWINS[id] = 同じ英単語の、ほかの番号の一覧
+const TWINS = {};
+(function () {
+  const nk = en => en.trim().replace(/[’‘]/g, "'").replace(/\s+/g, ' ').replace(/[.?!]+$/, '').toLowerCase();
+  const groups = {};
+  WORDS.forEach(w => (groups[nk(w.en)] = groups[nk(w.en)] || []).push(w.id));
+  BOOKS.forEach(b => b.entries.forEach(e => (groups[nk(e.en)] = groups[nk(e.en)] || []).push(e.id)));
+  Object.keys(groups).forEach(k => {
+    const g = groups[k];
+    if (g.length > 1) g.forEach(id => { TWINS[id] = g.filter(x => x !== id); });
+  });
+})();
 
 // 同じ意味(日本語)を持つ単語。タイピングではどちらを答えても正解にする
 const ALT = {};
@@ -175,6 +189,7 @@ function loadState() {
   return base;
 }
 let state = loadState();
+(function () { try { reconcileTwins(); localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* 保存できなくても動作は続ける */ } })();
 function saveState() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { console.warn('保存に失敗しました', e); }
 }
@@ -215,6 +230,26 @@ function rebuildModel(rec) {
   rec.B = B; rec.S = S;
 }
 
+// 同じ英単語の記録を、ほかの番号にもコピーする
+function syncTwins(id) {
+  const rec = state.learned[id];
+  if (!rec || !TWINS[id]) return;
+  TWINS[id].forEach(o => { state.learned[o] = JSON.parse(JSON.stringify(rec)); });
+}
+// 起動時・読み込み時に、同じ英単語の記録をそろえる（いちばん新しく学習したものを採用）
+function reconcileTwins() {
+  Object.keys(TWINS).forEach(k => {
+    const ids = [Number(k)].concat(TWINS[k]);
+    let best = null;
+    ids.forEach(i => {
+      const r = state.learned[i];
+      if (r && (!best || r.last > best.last || (r.last === best.last && r.reviews.length > best.reviews.length))) best = r;
+    });
+    if (!best) return;
+    ids.forEach(i => { if (state.learned[i] !== best) state.learned[i] = JSON.parse(JSON.stringify(best)); });
+  });
+}
+
 // 1回目の学習
 function learnNew(id) {
   const t = now();
@@ -222,6 +257,7 @@ function learnNew(id) {
   const key = dateKey(t);
   if (state.daily.date !== key) state.daily = { date: key, count: 0 };
   state.daily.count++;
+  syncTwins(id);
   saveState();
 }
 
@@ -236,6 +272,7 @@ function restudy(id) {
   rec.last = t;
   rec.B = e.B1;
   rec.S = e.S1;
+  syncTwins(id);
   saveState();
 }
 
@@ -251,6 +288,7 @@ function applyReview(id, ok, mode, hint) {
   rec.last = t;
   rec.B = e.B1;
   rec.S = e.S1;
+  syncTwins(id);
   saveState();
   return { R, bBefore, bAfter: e.B1, sBefore, sAfter: e.S1, due: dueTime(rec), t };
 }
@@ -263,8 +301,18 @@ let userActed = false;
 
 let cachedVoices = [];
 let currentUtterance = null;
+let voicesSeen = false;                 // 読み上げ音声が1つでも見つかったことがあるか
+const pageStart = Date.now();
 function refreshVoices() {
-  if ('speechSynthesis' in window) cachedVoices = window.speechSynthesis.getVoices();
+  if ('speechSynthesis' in window) {
+    cachedVoices = window.speechSynthesis.getVoices();
+    if (cachedVoices.length) voicesSeen = true;
+  }
+}
+// 読み込みから3秒たっても読み上げ音声が0個 → 音声エンジンが無い端末とみなす（Fireタブレットなど）
+function noVoiceEngine() {
+  refreshVoices();
+  return !voicesSeen && Date.now() - pageStart > 3000;
 }
 function getEnglishCandidates() {
   refreshVoices();
@@ -283,7 +331,8 @@ function getEnglishCandidates() {
 // ---------- 発音の再生 ----------
 // ① 端末の読み上げ機能（speechSynthesis）で読む
 // ② 端末の読み上げが使えないとき（Fireタブレットなど）は、インターネット上の発音音声（api.dictionaryapi.dev）で代用する
-const ttsBroken = () => { try { return localStorage.getItem('kb7_tts') === 'broken'; } catch (e) { return false; } };
+const ttsState = () => { try { return localStorage.getItem('kb7_tts') || ''; } catch (e) { return ''; } };
+const ttsBroken = () => ttsState() === 'broken';
 const setTtsState = v => { try { localStorage.setItem('kb7_tts', v); } catch (e) { /* 保存できなくても続行 */ } };
 let speakToken = 0;       // 最新の再生だけを有効にする
 let activeAudio = null;
@@ -390,11 +439,13 @@ function speakWord(text, opts) {
   stopAudio();
   const mode = state.settings.voiceMode || 'auto';          // auto / device / online
   const hasSynth = 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
-  if (mode === 'online' || (mode === 'auto' && (!hasSynth || ttsBroken()))) { playOnlineAudio(text, token, o.manual); return; }
+  // 「聞こえた」と確認済みなら端末の音声を使う。そうでなく、音声エンジンが無い・鳴らなかった端末はインターネット音声
+  const confirmed = ttsState() === 'confirmed';
+  if (mode === 'online' || (mode === 'auto' && (!hasSynth || ttsBroken() || (!confirmed && noVoiceEngine())))) { playOnlineAudio(text, token, o.manual); return; }
   if (!hasSynth) { if (o.manual) showSpeakNotice('この端末のブラウザは、読み上げに対応していません。'); return; }
   deviceSpeak(text, token, ok => {
     if (token !== speakToken) return;
-    if (ok) { if (ttsBroken()) setTtsState('ok'); return; }
+    if (ok) return;
     if (mode === 'auto') { setTtsState('broken'); playOnlineAudio(text, token, o.manual); }
     else if (o.manual) showSpeakNotice('端末の音声で読み上げられませんでした。設定の「音声の再生方法」を「自動」にしてください。');
   });
@@ -402,34 +453,69 @@ function speakWord(text, opts) {
 function speakEn(w, manual) { speakWord(layoutOf(w.en), { manual: !!manual }); }
 function autoSpeak(w) { if (userActed) speakEn(w, false); }
 
-// 設定の「音声のテスト」：原因を画面に表示する
+// 設定の「音声のテスト」：ブザー音 → 端末の音声 → インターネット音声 の順に鳴らし、聞こえたかどうかを答えてもらう
 async function runSpeechTest() {
   const el = $('speechInfo');
-  el.textContent = 'テスト中…（「apple」と読みます）';
-  const lines = [];
+  const log = [];
+  const show = extra => { el.innerHTML = log.map(esc).join('<br>') + (extra || ''); };
+  const ask = q => new Promise(res => {
+    show(`<div class="sp-q"><b>${esc(q)}</b><br><button class="btn-success" id="spY">聞こえた</button> <button class="btn-danger" id="spN">聞こえなかった</button></div>`);
+    $('spY').onclick = () => res(true);
+    $('spN').onclick = () => res(false);
+  });
+  const end = (msg, ok) => { show(`<div class="sp-end ${ok ? 'good' : 'bad'}">${esc(msg)}</div>`); };
   const has = 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
   refreshVoices();
   const en = cachedVoices.filter(v => v.lang && v.lang.toLowerCase().startsWith('en'));
-  lines.push(`端末の読み上げ機能：${has ? 'あり' : 'なし'}`);
-  lines.push(`読み上げ音声：全${cachedVoices.length}個（英語 ${en.length}個）`);
-  let devOk = false;
-  if (has) devOk = await new Promise(res => deviceSpeak('apple', ++speakToken, res));
-  lines.push(`端末の音声での再生：${devOk ? 'できました' : 'できませんでした'}`);
-  setTtsState(devOk ? 'ok' : 'broken');
-  let advice = '端末の音声が使えます。このまま使えます。';
-  if (!devOk) {
-    let url = '';
-    try { url = await audioUrlFor('apple', true); } catch (e) { url = ''; }
-    lines.push(`インターネット音声：${url ? '取得できました（これから再生します）' : '取得できませんでした'}`);
-    if (url) { advice = '端末の音声は使えませんが、インターネット音声で発音を聞けます（「自動」のままでOK）。音が出ない場合は、端末の音量と、ブラウザのサイト設定の「サウンド」を確認してください。'; await playUrl(url); }
-    else advice = '端末の音声もインターネット音声も使えませんでした。インターネット接続・端末の音量・ブラウザのサイト設定（サウンド）を確認してください。';
+  log.push(`端末の読み上げ機能：${has ? 'あり' : 'なし'}　／　読み上げ音声：全${cachedVoices.length}個（英語 ${en.length}個）`);
+
+  // ① ブザー音（ブラウザから音が出るか）
+  show('<div class="sp-q">① ブザー音を鳴らします…</div>');
+  beep(660, 0.25, true);
+  setTimeout(() => beep(880, 0.25, true), 300);
+  const heardBeep = await ask('① ブザー音（ピッ、ピッ）は聞こえましたか？');
+  log.push(`① ブザー音：${heardBeep ? '聞こえた' : '聞こえなかった'}`);
+  if (!heardBeep) return end('ブラウザから音が出ていません。タブレットの「メディア音量」と、Chromeのサイト設定の「サウンド（音）」を確認してください。ほかのアプリや動画の音は出るか、イヤホンをつないだ状態ではどうか、も試してください。', false);
+
+  // ② 端末の読み上げ音声
+  let heardDev = false;
+  if (has && cachedVoices.length) {
+    show('<div class="sp-q">② 端末の音声で「apple」と読みます…</div>');
+    await new Promise(res => deviceSpeak('apple', ++speakToken, res));
+    heardDev = await ask('② 「アップル」と英語で読む声は聞こえましたか？');
+    log.push(`② 端末の音声：${heardDev ? '聞こえた' : '聞こえなかった'}`);
+  } else {
+    log.push('② 端末の音声：読み上げ音声が見つからないため、使えません（この端末には音声エンジンが入っていない可能性があります）');
   }
-  el.innerHTML = lines.map(esc).join('<br>') + `<br><b>${esc(advice)}</b>`;
+  if (heardDev) {
+    setTtsState('confirmed');
+    return end('端末の音声が使えます。このまま使えます（設定「音声の再生方法」は「自動」のままでOK）。', true);
+  }
+  setTtsState('broken');
+
+  // ③ インターネット音声
+  show('<div class="sp-q">③ インターネット音声で「apple」を再生します…</div>');
+  let url = '';
+  try { url = await audioUrlFor('apple', true); } catch (e) { url = ''; }
+  if (!url) {
+    log.push('③ インターネット音声：取得できませんでした');
+    return end('インターネット音声を取得できませんでした。インターネット接続を確認してください。（このサービスが一時的に使えない可能性もあります）', false);
+  }
+  await playUrl(url);
+  const heardNet = await ask('③ 「apple」の発音は聞こえましたか？');
+  log.push(`③ インターネット音声：${heardNet ? '聞こえた' : '聞こえなかった'}`);
+  if (heardNet) {
+    state.settings.voiceMode = 'online';
+    saveState();
+    $('voiceMode').value = 'online';
+    return end('インターネット音声で発音を聞けます。「音声の再生方法」を「インターネット音声を優先」にしました。', true);
+  }
+  end('ブザー音は鳴るのに、発音の音声だけ鳴りません。ブラウザがこの音声ファイルの再生を止めている可能性があります。いちど Chrome を閉じて開き直し、もう一度テストしてください。', false);
 }
 
 let actx = null;
-function beep(freq, dur) {
-  if (!state.settings.sound) return;
+function beep(freq, dur, force) {
+  if (!state.settings.sound && !force) return;
   try {
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
     const o = actx.createOscillator();
@@ -1136,6 +1222,7 @@ function renderHomeLearn() {
       <div class="home-sub">未学習 ${unl}語 ／ 一度に覚える単語数を選んでください</div>
       ${batchChooserHTML()}
       <button class="btn-success big" id="btnStartLearn" ${unl ? '' : 'disabled'}>${label(state.settings.batchSize)}</button>
+      ${viewMode === 'book' ? '<div class="home-note">同じ英単語が「忘却曲線 英単語」にもある場合は、学習記録（定着度）が共有されます。</div>' : ''}
       <div class="home-note">1つの単語の英語を3回続けて打ちます。打ち終わったら、続けて「並び替え」→「完全タイピング」で練習します。</div>
     </div>`;
   $('btnStartLearn').onclick = () => startLearn(nextUnlearned(state.settings.batchSize), 'new', []);
@@ -1846,6 +1933,7 @@ function importData(ev) {
       if (confirm('現在の学習記録が上書きされます。よろしいですか？')) {
         const base = defaultState();
         state = Object.assign(base, imp, { settings: Object.assign(base.settings, imp.settings || {}) });
+        reconcileTwins();
         saveState();
         refreshAll();
         alert('学習記録をインポートしました');
