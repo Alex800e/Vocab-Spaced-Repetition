@@ -1,5 +1,5 @@
 'use strict';
-var APP_VERSION = 'v17';
+var APP_VERSION = 'v18';
 
 // ==========================================
 // 定数・記憶モデル
@@ -190,8 +190,23 @@ function loadState() {
 }
 let state = loadState();
 (function () { try { reconcileTwins(); localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* 保存できなくても動作は続ける */ } })();
+let storageOK = true;
 function saveState() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { console.warn('保存に失敗しました', e); }
+  state.savedAt = Date.now();
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); storageOK = true; }
+  catch (e) { storageOK = false; console.warn('保存に失敗しました', e); }
+  if (typeof renderSaveInfo === 'function') renderSaveInfo();
+}
+// 保存の状態を、設定の中に表示する（開き直したときに、記録が残っているか確認できる）
+function renderSaveInfo() {
+  const el = document.getElementById('saveInfo');
+  if (!el) return;
+  const n = Object.keys(state.learned || {}).length;
+  el.textContent = storageOK
+    ? `学習記録：${n}語ぶん保存されています${state.savedAt ? '（最後の保存：' + fmtDate(state.savedAt) + '）' : ''}`
+    : '⚠ このブラウザでは学習記録を保存できていません（シークレットモードや、サイトデータの保存を禁止する設定が原因のことがあります）';
+  const b = document.getElementById('loadError');
+  if (b && !storageOK) { b.textContent = '学習記録を保存できません。シークレットモードではないか、ブラウザの「サイトデータの保存」設定を確認してください。'; b.hidden = false; }
 }
 const now = () => Date.now() + (state.offsetMs || 0);
 
@@ -1337,7 +1352,7 @@ function knBlock(w, level) {
 
 function startLearn(ids, cat, series) {
   if (!ids.length) return;
-  learn = { ids: ids.slice(), queue: ids.slice(), idx: 0, rep: 0, wordMissed: false, missed: [], retry: false, cat: cat || 'new', series: series || [] };
+  learn = { ids: ids.slice(), queue: ids.slice(), idx: 0, rep: 0, wordMissed: false, missed: [], retry: false, cat: cat || 'new', series: series || [], recorded: {} };
   screen = 'learn';
   session = { queue: [], i: 0, ok: 0, ng: 0, learned: 0, total: 0 };
   setChrome();
@@ -1345,6 +1360,7 @@ function startLearn(ids, cat, series) {
     `1つの単語を<b>${COPY_PATTERN.length}回</b>続けて打ちます。<br>
      ${COPY_PATTERN.map((p, i) => `${i + 1}回目：${p === 'en' ? '英語を打つ' : '日本語を打つ'}`).join('<br>')}<br>
      間違えた単語は、最後にもう一度（${COPY_PATTERN.length}回）打ちます。<br>
+     間違えずに打ち終えた単語から、順に学習記録に残ります。<br>
      打ち終わったら、続けて「${PRACTICE_CHAIN.map(m => MODE_LABEL[m]).join('」→「')}」で練習します。`,
     'はじめる', nextLearnItem);
 }
@@ -1378,8 +1394,15 @@ function nextLearnItem() {
   renderCard();
 }
 
+// 1語の3回打ちを間違えずに終えたら、その場で学習記録に残す（途中でブラウザを閉じても、打ち終えた語は残る）
+function recordLearned(id) {
+  if (!learn || learn.recorded[id]) return;
+  if (!state.learned[id]) learnNew(id); else restudy(id);
+  learn.recorded[id] = true;
+  updateLearnStats();
+}
 function finishLearn() {
-  learn.ids.forEach(id => { if (!state.learned[id]) learnNew(id); else restudy(id); });
+  learn.ids.forEach(recordLearned);
   lastBatch = { ids: learn.ids.slice(), cat: learn.cat, series: learn.series.concat(learn.ids) };
   const ids = lastBatch.ids;
   renderMsg(`${ids.length}単語を打ち終わりました 🎉`,
@@ -1523,6 +1546,7 @@ function completeCopy() {
     learn.rep++;
     if (learn.rep >= COPY_PATTERN.length) {
       if (learn.wordMissed && learn.missed.indexOf(me.word.id) < 0) learn.missed.push(me.word.id);
+      if (!learn.wordMissed) recordLearned(me.word.id);
       learn.rep = 0;
       learn.idx++;
       learn.wordMissed = false;
@@ -1886,7 +1910,7 @@ function renderDetail() {
 function switchTab(name) {
   const study = name !== 'graph';
   if (study && name !== activeStudyTab) {
-    if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。タブを切り替えますか？')) return;
+    if (screen === 'learn' && !confirm('途中でやめると、まだ打ち終えていない単語は記録されません（打ち終えた単語は記録済みです）。タブを切り替えますか？')) return;
     activeStudyTab = name;
     document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     $('tab-learn').hidden = false;
@@ -1956,6 +1980,7 @@ function resetAll() {
 
 function refreshAll() {
   renderScopeBar();
+  renderSaveInfo();
   $('jaFirst').checked = !!state.settings.jaFirstOnly;
   $('kanaMode').value = state.settings.kana || 'grad';
   $('homePage').value = state.settings.home || 'words';
@@ -1973,7 +1998,7 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
 
 function setView(v) {
   if (v === viewMode || (v === 'book' && !BOOKS.length)) return;
-  if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。ページを切り替えますか？')) return;
+  if (screen === 'learn' && !confirm('途中でやめると、まだ打ち終えていない単語は記録されません（打ち終えた単語は記録済みです）。ページを切り替えますか？')) return;
   viewMode = v;
   gLimit = 300;
   renderScopeBar();
@@ -1982,7 +2007,7 @@ function setView(v) {
 }
 $('modeSwitch').addEventListener('click', () => setView(viewMode === 'book' ? 'words' : 'book'));
 $('scopeBook').addEventListener('change', ev => {
-  if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。本を切り替えますか？')) { renderScopeBar(); return; }
+  if (screen === 'learn' && !confirm('途中でやめると、まだ打ち終えていない単語は記録されません（打ち終えた単語は記録済みです）。本を切り替えますか？')) { renderScopeBar(); return; }
   state.settings.book = ev.target.value;
   saveState();
   gLimit = 300;
@@ -1992,7 +2017,7 @@ $('scopeBook').addEventListener('change', ev => {
 $('btnStory').addEventListener('click', openStory);
 $('homePage').addEventListener('change', ev => { state.settings.home = ev.target.value; saveState(); });
 function onScopeChange(level, theme) {
-  if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。範囲を変えますか？')) { renderScopeBar(); return; }
+  if (screen === 'learn' && !confirm('途中でやめると、まだ打ち終えていない単語は記録されません（打ち終えた単語は記録済みです）。範囲を変えますか？')) { renderScopeBar(); return; }
   state.settings.level = level;
   state.settings.theme = theme;
   saveState();
@@ -2036,7 +2061,7 @@ document.addEventListener('click', ev => {
 });
 
 $('backHome').addEventListener('click', () => {
-  if (screen === 'learn' && !confirm('途中でやめると、この単語の学習は記録されません。ホームに戻りますか？')) return;
+  if (screen === 'learn' && !confirm('途中でやめると、まだ打ち終えていない単語は記録されません（打ち終えた単語は記録済みです）。ホームに戻りますか？')) return;
   renderHome();
 });
 
