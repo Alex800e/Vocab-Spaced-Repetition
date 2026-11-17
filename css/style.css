@@ -449,3 +449,17 @@ body.book-mode .tab.active { color: #b45309; border-bottom-color: #b45309; }
 
 .info-banner { background: #eff6ff; color: #1e3a8a; border: 2px solid #bfdbfe; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; line-height: 1.7; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .info-banner button { padding: 6px 12px; font-size: 13px; }
+
+/* ===== Googleアカウントでの同期 ===== */
+.sync-btn { flex: 0 0 auto; background: #e5e7eb; color: #374151; padding: 8px 12px; border-radius: 999px; font-weight: bold; font-size: 14px; }
+.sync-btn.ok { background: #dcfce7; color: #166534; }
+.sync-btn.syncing { background: #e0e7ff; color: #3730a3; }
+.sync-btn.error, .sync-btn.need { background: #fef3c7; color: #92400e; }
+.sync-box { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 12px 0; background: #fafafa; }
+.sync-title { font-weight: bold; margin-bottom: 4px; }
+.sync-note { font-size: 12px; color: var(--sub); line-height: 1.7; }
+.sync-status { font-size: 13px; margin: 8px 0; padding: 6px 10px; border-radius: 6px; background: #f3f4f6; color: #374151; }
+.sync-status.ok { background: #dcfce7; color: #166534; }
+.sync-status.syncing { background: #e0e7ff; color: #3730a3; }
+.sync-status.error, .sync-status.need { background: #fef3c7; color: #92400e; }
+.sync-buttons { display: flex; gap: 8px; flex-wrap: wrap; }

@@ -1,5 +1,5 @@
 'use strict';
-var APP_VERSION = 'v19';
+var APP_VERSION = 'v20';
 
 // ==========================================
 // 定数・記憶モデル
@@ -150,6 +150,7 @@ function dateKey(t) {
 // ==========================================
 function defaultState() {
   return {
+    syncEpoch: 0,                                  // リセット・インポートをした時刻（端末どうしの同期で、新しいほうを優先する）
     learned: {},                                   // id -> {first, last, S, reviews:[{t, ok, R, S0, S1, mode, hint}]}
     settings: { mode: 'tap', batchSize: 5, sound: true, jaFirstOnly: true, reviewCat: 'low', level: 'all', theme: 'all', kana: 'grad', voiceMode: 'auto', home: 'words', book: (BOOKS[0] && BOOKS[0].id) || '' },
     version: 3,
@@ -225,7 +226,7 @@ function mirrorToIDB(str) {
   clearTimeout(idbTimer);
   idbTimer = setTimeout(() => { idbKV.put('state', str).catch(() => {}); }, 400);
 }
-function saveState() {
+function saveState(opts) {
   state.savedAt = Date.now();
   try {
     const str = JSON.stringify(state);
@@ -242,6 +243,8 @@ function saveState() {
   }
   catch (e) { storageOK = false; console.warn('保存に失敗しました', e); }
   if (typeof renderSaveInfo === 'function') renderSaveInfo();
+  // Googleアカウントでの同期（js/sync.js）に、保存したことを知らせる
+  if (!(opts && opts.quiet) && typeof window.KB7_onSaved === 'function') window.KB7_onSaved();
 }
 // 画面上部のお知らせ（復元したとき／バックアップを書き出していないとき）
 function renderBackupBanner() {
@@ -2031,6 +2034,7 @@ function importData(ev) {
       if (confirm('現在の学習記録が上書きされます。よろしいですか？')) {
         const base = defaultState();
         state = Object.assign(base, imp, { settings: Object.assign(base.settings, imp.settings || {}) });
+        state.syncEpoch = Date.now();
         reconcileTwins();
         saveState();
         refreshAll();
@@ -2047,6 +2051,7 @@ function importData(ev) {
 function resetAll() {
   if (!confirm('これまでの学習記録がすべて消えます。よろしいですか？')) return;
   state = defaultState();
+  state.syncEpoch = Date.now();
   saveState();
   refreshAll();
   alert('学習記録をリセットしました');
@@ -2230,4 +2235,24 @@ if ('speechSynthesis' in window) {
   refreshVoices();
   window.speechSynthesis.onvoiceschanged = refreshVoices;
 }
+// js/sync.js（Googleアカウントでの同期）が使う、アプリとの接続口
+window.KB7 = {
+  getState: () => state,
+  // 同期で受け取った学習記録を反映する（学習中の画面は中断しない）
+  applyRemote(learned, epoch) {
+    state.learned = learned;
+    state.syncEpoch = epoch || 0;
+    reconcileTwins();
+    saveState({ quiet: true });
+    this.refreshLight();
+  },
+  refreshLight() {
+    updateLearnStats();
+    renderSaveInfo();
+    renderBackupBanner();
+    if (screen === 'home') renderHome();
+    if (!$('tab-graph').hidden) renderGraphTab();
+  },
+  migrateState, reconcileTwins, fmtDate, esc
+};
 refreshAll();
