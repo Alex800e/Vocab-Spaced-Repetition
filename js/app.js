@@ -1,5 +1,5 @@
 'use strict';
-var APP_VERSION = 'v18';
+var APP_VERSION = 'v19';
 
 // ==========================================
 // 定数・記憶モデル
@@ -177,33 +177,95 @@ function migrateState(s) {
   }
   return s;
 }
-function loadState() {
+let loadNotice = '';     // 起動時に画面へ知らせる内容（復元した・読めなかった など）
+function parseSaved(raw) {
   const base = defaultState();
-  try {
-    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (s && typeof s.learned === 'object' && s.learned) {
-      migrateState(s);
-      return Object.assign(base, s, { settings: Object.assign(base.settings, s.settings || {}) });
+  const s = JSON.parse(raw);
+  if (!(s && typeof s.learned === 'object' && s.learned)) throw new Error('形式が違います');
+  migrateState(s);
+  return Object.assign(base, s, { settings: Object.assign(base.settings, s.settings || {}) });
+}
+function loadState() {
+  let raw = null;
+  try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { /* 保存領域が使えない */ }
+  if (raw) {
+    try { return parseSaved(raw); }
+    catch (e) {
+      // 読めなかった保存データは、上書きされないように別の場所へ退避する
+      try { localStorage.setItem(STORAGE_KEY + '_rescue', raw); } catch (e2) { /* 無視 */ }
+      loadNotice = '保存データを読み込めませんでした。元のデータは退避してあります（設定の「退避データを書き出す」で取り出せます）。';
     }
-  } catch (e) { /* 初回など */ }
-  return base;
+  }
+  // 本体が無い・読めないときは、自動バックアップから復元を試す
+  try {
+    const bak = localStorage.getItem(STORAGE_KEY + '_bak');
+    if (bak) { const st = parseSaved(bak); loadNotice = '保存データが見つからなかったため、自動バックアップから復元しました。'; return st; }
+  } catch (e) { /* 無視 */ }
+  return defaultState();
 }
 let state = loadState();
-(function () { try { reconcileTwins(); localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* 保存できなくても動作は続ける */ } })();
+(function () { try { reconcileTwins(); if (!loadNotice.startsWith('保存データを読み込めませんでした')) localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* 保存できなくても動作は続ける */ } })();
 let storageOK = true;
+// IndexedDB にも控えを残す（localStorage だけが消えたときの保険）
+const idbKV = {
+  open() {
+    return new Promise((res, rej) => {
+      if (!window.indexedDB) return rej(new Error('IndexedDB なし'));
+      const r = indexedDB.open('kb7', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+  },
+  put(key, val) { return this.open().then(db => new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(val, key); t.oncomplete = res; t.onerror = () => rej(t.error); })); },
+  get(key) { return this.open().then(db => new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(key); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); })); }
+};
+let idbTimer = null;
+function mirrorToIDB(str) {
+  clearTimeout(idbTimer);
+  idbTimer = setTimeout(() => { idbKV.put('state', str).catch(() => {}); }, 400);
+}
 function saveState() {
   state.savedAt = Date.now();
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); storageOK = true; }
+  try {
+    const str = JSON.stringify(state);
+    // 3時間に1回、いまの保存データを「自動バックアップ」として残してから上書きする
+    const prev = localStorage.getItem(STORAGE_KEY);
+    const lastBak = Number(localStorage.getItem(STORAGE_KEY + '_bakt')) || 0;
+    if (prev && Date.now() - lastBak > 3 * 3600 * 1000) {
+      localStorage.setItem(STORAGE_KEY + '_bak', prev);
+      localStorage.setItem(STORAGE_KEY + '_bakt', String(Date.now()));
+    }
+    localStorage.setItem(STORAGE_KEY, str);
+    storageOK = true;
+    mirrorToIDB(str);
+  }
   catch (e) { storageOK = false; console.warn('保存に失敗しました', e); }
   if (typeof renderSaveInfo === 'function') renderSaveInfo();
+}
+// 画面上部のお知らせ（復元したとき／バックアップを書き出していないとき）
+function renderBackupBanner() {
+  const b = document.getElementById('backupBanner');
+  if (!b) return;
+  const n = Object.keys(state.learned || {}).length;
+  const weekMs = 7 * 24 * 3600 * 1000;
+  let html = '';
+  if (loadNotice) html = `<span>${esc(loadNotice)}</span>`;
+  else if (n >= 5 && (!state.lastExport || Date.now() - state.lastExport > weekMs))
+    html = `<span>学習記録を守るため、ときどきバックアップを書き出しましょう（${state.lastExport ? '前回：' + fmtDate(state.lastExport) : 'まだ書き出していません'}）。</span> <button id="btnBackupNow" class="btn-secondary">いま書き出す</button>`;
+  b.innerHTML = html;
+  b.hidden = !html;
+  const bn = document.getElementById('btnBackupNow');
+  if (bn) bn.onclick = exportData;
 }
 // 保存の状態を、設定の中に表示する（開き直したときに、記録が残っているか確認できる）
 function renderSaveInfo() {
   const el = document.getElementById('saveInfo');
   if (!el) return;
   const n = Object.keys(state.learned || {}).length;
+  const ex = state.lastExport ? `最後のバックアップ（エクスポート）：${fmtDate(state.lastExport)}` : 'バックアップ（エクスポート）：まだ書き出していません';
   el.textContent = storageOK
-    ? `学習記録：${n}語ぶん保存されています${state.savedAt ? '（最後の保存：' + fmtDate(state.savedAt) + '）' : ''}`
+    ? `学習記録：${n}語ぶん保存されています${state.savedAt ? '（最後の保存：' + fmtDate(state.savedAt) + '）' : ''}　／　${ex}`
     : '⚠ このブラウザでは学習記録を保存できていません（シークレットモードや、サイトデータの保存を禁止する設定が原因のことがあります）';
   const b = document.getElementById('loadError');
   if (b && !storageOK) { b.textContent = '学習記録を保存できません。シークレットモードではないか、ブラウザの「サイトデータの保存」設定を確認してください。'; b.hidden = false; }
@@ -1935,7 +1997,19 @@ function renderTimeNow() {
     : `現在の時刻：${fmtDate(now())}（時間は進めていません）`;
 }
 
+function exportRescue() {
+  let raw = null;
+  try { raw = localStorage.getItem(STORAGE_KEY + '_rescue'); } catch (e) { /* 無視 */ }
+  if (!raw) { alert('退避したデータはありません'); return; }
+  const a = document.createElement('a');
+  a.setAttribute('href', 'data:text/json;charset=utf-8,' + encodeURIComponent(raw));
+  a.setAttribute('download', 'kb7_rescue_data.json');
+  document.body.appendChild(a); a.click(); a.remove();
+}
 function exportData() {
+  state.lastExport = Date.now();
+  saveState();
+  renderBackupBanner();
   const str = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(state));
   const a = document.createElement('a');
   a.setAttribute('href', str);
@@ -1981,6 +2055,7 @@ function resetAll() {
 function refreshAll() {
   renderScopeBar();
   renderSaveInfo();
+  renderBackupBanner();
   $('jaFirst').checked = !!state.settings.jaFirstOnly;
   $('kanaMode').value = state.settings.kana || 'grad';
   $('homePage').value = state.settings.home || 'words';
@@ -1995,6 +2070,21 @@ function refreshAll() {
 // イベント登録
 // ==========================================
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+
+// localStorage の記録が空で、IndexedDB に控えがあるときは復元する
+(function () {
+  if (Object.keys(state.learned).length > 0 || loadNotice) return;
+  idbKV.get('state').then(raw => {
+    if (!raw) return;
+    let st;
+    try { st = parseSaved(raw); } catch (e) { return; }
+    if (Object.keys(st.learned).length === 0 || Object.keys(state.learned).length > 0) return;
+    state = st;
+    loadNotice = 'ブラウザの保存データが消えていたため、控え（IndexedDB）から学習記録を復元しました。';
+    saveState();
+    refreshAll();
+  }).catch(() => {});
+})();
 
 function setView(v) {
   if (v === viewMode || (v === 'book' && !BOOKS.length)) return;
@@ -2095,6 +2185,7 @@ $('btnSpeechTest').addEventListener('click', runSpeechTest);
 $('kanaMode').addEventListener('change', ev => { state.settings.kana = ev.target.value; saveState(); });
 $('soundOn').addEventListener('change', ev => { state.settings.sound = ev.target.checked; saveState(); });
 $('btnExport').addEventListener('click', exportData);
+$('btnRescue').addEventListener('click', exportRescue);
 $('btnImport').addEventListener('click', () => $('importFile').click());
 $('importFile').addEventListener('change', importData);
 $('btnReset').addEventListener('click', resetAll);

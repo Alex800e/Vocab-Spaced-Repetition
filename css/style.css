@@ -446,3 +446,6 @@ body.book-mode .tab.active { color: #b45309; border-bottom-color: #b45309; }
 .sp-end.bad { background: #fef2f2; color: #991b1b; }
 
 .save-info { font-size: 13px; color: #374151; background: #f3f4f6; border-radius: 8px; padding: 8px 12px; margin: 6px 0 12px; }
+
+.info-banner { background: #eff6ff; color: #1e3a8a; border: 2px solid #bfdbfe; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; line-height: 1.7; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.info-banner button { padding: 6px 12px; font-size: 13px; }
