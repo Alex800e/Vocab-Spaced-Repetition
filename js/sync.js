@@ -212,6 +212,26 @@
       setStatus('need', 'ログインできませんでした。ポップアップがブロックされていないか確認して、もう一度お試しください。');
     }
   }
+  // Google Drive の「アプリ専用フォルダ」に保存された同期データを削除する
+  async function deleteRemote() {
+    if (!CLIENT_ID) { setStatus('off', '同期は未設定です（js/config.js にGoogleのクライアントIDが必要です）。'); return; }
+    if (!confirm('Google Drive に保存された、このアプリの同期データを削除します。\n\n・この端末の学習記録は消えません。\n・削除後は、この端末の同期を止めます（もう一度ログインすると、この端末の記録を再びアップロードします）。\n・ほかの端末で同期中の場合は、その端末の記録が再びアップロードされます。\n\nよろしいですか？')) return;
+    try {
+      setStatus('syncing', 'Google Drive のデータを削除しています…');
+      await ensureToken('');
+      const q = encodeURIComponent(`name='${FILE_NAME}'`);
+      const res = await dfetch(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=${encodeURIComponent('files(id,name)')}`, {}, '');
+      const files = (await res.json()).files || [];
+      for (const f of files) await dfetch(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method: 'DELETE' }, '');
+      meta.fileId = ''; meta.linked = false; meta.email = ''; meta.uploadedSavedAt = 0;
+      saveMeta();
+      try { if (token && gisReady()) google.accounts.oauth2.revoke(token, () => {}); } catch (e) { /* 無視 */ }
+      token = null; tokenExp = 0;
+      setStatus('off', files.length ? `Google Drive の同期データを削除しました（${files.length}件）。この端末の学習記録は残っています。` : 'Google Drive に、削除する同期データはありませんでした。');
+    } catch (e) {
+      setStatus('error', '削除できませんでした：' + ((e && e.message) || '不明なエラー'));
+    }
+  }
   function logout() {
     try { if (token && gisReady()) google.accounts.oauth2.revoke(token, () => {}); } catch (e) { /* 無視 */ }
     token = null; tokenExp = 0;
@@ -241,10 +261,12 @@
     if (li) li.addEventListener('click', login);
     if (sy) sy.addEventListener('click', () => syncNow(true));
     if (lo) lo.addEventListener('click', logout);
+    const de = $('btnGDelete');
+    if (de) { de.hidden = !CLIENT_ID; de.addEventListener('click', deleteRemote); }
     if (!CLIENT_ID) { setStatus('off', '同期は未設定です（js/config.js にGoogleのクライアントIDを入れると使えます。手順は README.md にあります）。'); return; }
     if (meta.linked) { setStatus('need', 'Googleアカウントと同期中…（最初に画面をタップすると再開します）'); setTimeout(() => syncNow(false), 1500); }
     else setStatus('off', 'ログインすると、学習記録がほかの端末とも共有されます。');
   }
-  window.KB7_sync = { syncNow, login, logout, merge, getMeta: () => meta, tokenValid };
+  window.KB7_sync = { syncNow, login, logout, deleteRemote, merge, getMeta: () => meta, tokenValid };
   init();
 })();

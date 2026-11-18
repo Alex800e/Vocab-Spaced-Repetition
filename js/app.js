@@ -1,5 +1,5 @@
 'use strict';
-var APP_VERSION = 'v20';
+var APP_VERSION = 'v21';
 
 // ==========================================
 // 定数・記憶モデル
