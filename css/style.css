@@ -463,3 +463,6 @@ body.book-mode .tab.active { color: #b45309; border-bottom-color: #b45309; }
 .sync-status.syncing { background: #e0e7ff; color: #3730a3; }
 .sync-status.error, .sync-status.need { background: #fef3c7; color: #92400e; }
 .sync-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.site-footer { max-width: 760px; width: 100%; margin: 0 auto 24px; padding: 0 8px; font-size: 12px; color: #6b7280; line-height: 1.8; text-align: center; }
+.site-footer a { color: #4f46e5; }

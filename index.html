@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>忘却曲線 英単語学習（英検7級）</title>
-    <link rel="stylesheet" href="css/style.css?v=21">
+    <link rel="stylesheet" href="css/style.css?v=22">
 </head>
 <body>
 
@@ -13,7 +13,7 @@
     <div id="backupBanner" class="info-banner" hidden></div>
     <div class="head">
         <button class="mode-switch" id="modeSwitch" title="本で英単語を学ぶ">📖 本</button>
-        <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v21</small></h1>
+        <h1>忘却曲線 英単語 <small>英検 7級〜1級</small> <small class="ver">v22</small></h1>
         <button class="sync-btn off" id="syncBtn" title="Googleアカウントで同期" hidden>☁</button>
     </div>
 
@@ -153,6 +153,11 @@
     </details>
 </div>
 
+<footer class="site-footer">
+    <p>「忘却曲線 英単語」は、英検7級〜1級の英単語や、物語に出てくる英単語を、忘却曲線にもとづいて学べる学習アプリです。Googleアカウントでログインすると、学習記録をご自身のGoogle Driveに保存し、複数の端末で共有できます。</p>
+    <p><a href="privacy.html">プライバシーポリシー・ご利用案内</a> ｜ <a href="terms.html">利用規約</a></p>
+</footer>
+
 <!-- ===== 単語ごとの詳細（忘却曲線） ===== -->
 <div id="modal" class="modal" hidden>
     <div class="modal-box">
@@ -167,26 +172,26 @@ var BOOKS_DATA = [];
 var __errs = [];
 window.addEventListener("error", function (e) { __errs.push((e.message || "") + (e.filename ? " (" + e.filename.split("/").slice(-2).join("/") + ")" : "")); });
 </script>
-<script src="js/data/words_7.js?v=21"></script>
-<script src="js/data/words_6.js?v=21"></script>
-<script src="js/data/words_5.js?v=21"></script>
-<script src="js/data/words_4.js?v=21"></script>
-<script src="js/data/words_3.js?v=21"></script>
-<script src="js/data/words_p2.js?v=21"></script>
-<script src="js/data/words_2.js?v=21"></script>
-<script src="js/data/words_p1.js?v=21"></script>
-<script src="js/data/words_1.js?v=21"></script>
-<script src="js/data/legacy.js?v=21"></script>
-<script src="js/data/book_pigs.js?v=21"></script>
-<script src="js/data/book_kittens.js?v=21"></script>
-<script src="js/data/book_bears.js?v=21"></script>
-<script src="js/data/book_chicken.js?v=21"></script>
-<script src="js/data/book_ginger.js?v=21"></script>
-<script src="js/data/book_oldwoman.js?v=21"></script>
-<script src="js/data/book_owl.js?v=21"></script>
-<script src="js/config.js?v=21"></script>
-<script src="js/app.js?v=21"></script>
-<script src="js/sync.js?v=21"></script>
+<script src="js/data/words_7.js?v=22"></script>
+<script src="js/data/words_6.js?v=22"></script>
+<script src="js/data/words_5.js?v=22"></script>
+<script src="js/data/words_4.js?v=22"></script>
+<script src="js/data/words_3.js?v=22"></script>
+<script src="js/data/words_p2.js?v=22"></script>
+<script src="js/data/words_2.js?v=22"></script>
+<script src="js/data/words_p1.js?v=22"></script>
+<script src="js/data/words_1.js?v=22"></script>
+<script src="js/data/legacy.js?v=22"></script>
+<script src="js/data/book_pigs.js?v=22"></script>
+<script src="js/data/book_kittens.js?v=22"></script>
+<script src="js/data/book_bears.js?v=22"></script>
+<script src="js/data/book_chicken.js?v=22"></script>
+<script src="js/data/book_ginger.js?v=22"></script>
+<script src="js/data/book_oldwoman.js?v=22"></script>
+<script src="js/data/book_owl.js?v=22"></script>
+<script src="js/config.js?v=22"></script>
+<script src="js/app.js?v=22"></script>
+<script src="js/sync.js?v=22"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 // ファイルの置き忘れ・古いファイルが混ざっているときに、画面に原因を表示する
@@ -194,7 +199,7 @@ window.addEventListener("error", function (e) { __errs.push((e.message || "") + 
   var msg = "";
   var wordsOk = false;
   try { wordsOk = typeof WORDS !== "undefined" && WORDS.length > 0; } catch (e) {}
-  if (typeof APP_VERSION === "undefined" || APP_VERSION !== "v21") {
+  if (typeof APP_VERSION === "undefined" || APP_VERSION !== "v22") {
     msg = "js/app.js が古い、または見つかりません。zipの中身（js・css・index.html）をすべて新しいものに上書きしてください。";
   } else if (!wordsOk) {
     msg = "単語データが読み込めていません。js/data フォルダ（words_7.js など10ファイル）が、フォルダごとアップロードされているか確認してください。";
