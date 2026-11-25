@@ -1,5 +1,5 @@
 'use strict';
-var APP_VERSION = 'v22';
+var APP_VERSION = 'v24';
 
 // ==========================================
 // 定数・記憶モデル
@@ -1399,6 +1399,21 @@ function knHTML(kn) {
     return `<span class="kn-w">${html}</span>`;
   }).join(' ');
 }
+// 例文：使われている英単語を青くハイライトする
+function hlSentence(en, surf) {
+  const e = esc(en);
+  if (!surf) return e;
+  const sf = esc(surf).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return e.replace(new RegExp('(^|[^A-Za-z])(' + sf + ')(?![A-Za-z])', 'i'), '$1<span class="hl">$2</span>');
+}
+const spkBtn = text => `<button class="btn-audio ex-spk" data-say="${esc(text)}" aria-label="例文を読み上げる">🔊</button>`;
+function exHTML(w) {
+  if (w.bk) return ctxHTML(w);                       // 本の単語は、本文の中の1文を例文にする
+  const e = (typeof EXAMPLES !== 'undefined') ? EXAMPLES[w.id] : null;
+  if (!e) return '';
+  return `<div class="ex"><div class="ex-head"><span class="ex-t">例文</span>${spkBtn(e[0])}</div>
+    <div class="ex-en">${hlSentence(e[0], e[2])}</div><div class="ex-ja">${esc(e[1])}</div></div>`;
+}
 // 本の単語・フレーズが出てくる文（本文）
 function ctxHTML(w) {
   const b = w.bk ? BOOKS.find(x => x.id === w.bk) : null;
@@ -1407,7 +1422,7 @@ function ctxHTML(w) {
   if (!ln) return '';
   const surf = esc(w.ctx[0].s);
   const en = esc(ln.en).replace(surf, `<mark>${surf}</mark>`);
-  return `<div class="ctx"><div class="ctx-t">本文</div><div class="ctx-en">${en}</div><div class="ctx-ja">${esc(ln.ja)}</div></div>`;
+  return `<div class="ctx"><div class="ctx-head"><span class="ctx-t">本文（例文）</span>${spkBtn(ln.en)}</div><div class="ctx-en">${en}</div><div class="ctx-ja">${esc(ln.ja)}</div></div>`;
 }
 function knBlock(w, level) {
   if (level === 'none') return '';
@@ -1503,7 +1518,7 @@ function renderCopy() {
       <div class="irow"><span class="il">品詞</span><span class="iv">${esc(w.pos)}</span></div>
       <div class="irow"><span class="il">英語</span><span class="iv en${lang === 'en' ? ' target' : ''}"><span class="en-line"><span class="en-word">${esc(layoutOf(w.en))}</span><button class="btn-audio" id="btnSpeak" aria-label="発音">🔊</button></span>${knBlock(w, knLevel(w))}</span></div>
       <div class="irow"><span class="il">日本語</span><span class="iv ja${lang === 'ja' ? ' target' : ''}">${jaHtml}</span></div>
-    </div>${ctxHTML(w)}`;
+    </div>${exHTML(w)}`;
   $('btnSpeak').onclick = () => speakEn(w, true);
   if ($('knPeek')) $('knPeek').onclick = () => { $('knBox').innerHTML = `<div class="kn light">${knHTML(w.kn)}</div>`; };
 
@@ -1909,7 +1924,7 @@ function renderDetail() {
       <button class="btn-audio" id="dSpeak" aria-label="発音">🔊</button>
       <span class="tag">${esc(w.pos)}</span>
     </div>
-    <div class="d-ja">#${w.no || w.id}　${jaHTML(w)}</div>${ctxHTML(w)}`;
+    <div class="d-ja">#${w.no || w.id}　${jaHTML(w)}</div>${exHTML(w)}`;
 
   if (!rec) {
     $('modalBody').innerHTML = head + `
@@ -2075,6 +2090,10 @@ function refreshAll() {
 // イベント登録
 // ==========================================
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+document.addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-say]');
+  if (b) { ev.preventDefault(); speakWord(b.dataset.say); }
+});
 
 // localStorage の記録が空で、IndexedDB に控えがあるときは復元する
 (function () {

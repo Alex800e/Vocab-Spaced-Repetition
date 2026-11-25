@@ -466,3 +466,12 @@ body.book-mode .tab.active { color: #b45309; border-bottom-color: #b45309; }
 
 .site-footer { max-width: 760px; width: 100%; margin: 0 auto 24px; padding: 0 8px; font-size: 12px; color: #6b7280; line-height: 1.8; text-align: center; }
 .site-footer a { color: #4f46e5; }
+
+/* ===== 例文（日本語の下に表示。使われている英単語は青くハイライト） ===== */
+.ex, .ctx { width: 100%; max-width: 460px; margin: 10px auto 0; padding: 8px 12px; background: #f8fafc; border-left: 4px solid var(--primary); border-radius: 6px; text-align: left; }
+.ex-head, .ctx-head { display: flex; align-items: center; gap: 6px; }
+.ex-t, .ctx-t { font-size: 11px; color: var(--primary); font-weight: bold; }
+.ex-en, .ctx-en { font-size: 16px; line-height: 1.6; color: #1f2937; }
+.ex-en .hl, .ctx-en mark { color: var(--primary); font-weight: bold; background: #e0e7ff; border-radius: 3px; padding: 0 2px; }
+.ex-ja, .ctx-ja { font-size: 13px; color: #6b7280; }
+.ex-spk { font-size: 16px; padding: 2px 6px; }
