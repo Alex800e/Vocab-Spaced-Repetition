@@ -2,16 +2,18 @@
 """単語ごとの例文（英語＋日本語訳）を、英日対訳コーパスから選んで js/data/examples.js を作るスクリプト
 
 使い方（どちらか）:
-  python3 make_examples.py --en 英語のファイル --ja 日本語のファイル      … 1行ごとに対応した2つのファイル（単語ごとにスペースで区切られていてもよい）
-  python3 make_examples.py --tsv 対訳.tsv                                  … 「英語<TAB>日本語」の形式（Tatoebaの対訳ファイルなど）
-同じ単語に複数の候補があるときは、短くてやさしい文を選びます。広告・暴力・性的な語を含む文は除きます。
+  python3 make_examples.py --tsv Tatoebaの対訳ファイル.tsv.bz2          … Tatoebaの「文のペア」ファイル（圧縮したまま使えます）。ほかの「英語<TAB>日本語」の2列のファイルも使えます
+  python3 make_examples.py --en 英語のファイル --ja 日本語のファイル      … 1行ごとに対応した2つのファイル
+そのほかのオプション:
+  --no-merge   … 今ある js/data/examples.js の例文を引き継がずに、作り直す（ふつうは、新しい対訳に無い語は、今ある例文を残します）
+同じ単語に複数の候補があるときは、短くてやさしい文を選びます。暴力・性的な語などを含む文は除きます。
 例文の出典（田中コーパス／Tatoebaプロジェクト）を、画面の下とREADMEに書いています。
 """
-import argparse, json, os, re, sys, collections
+import argparse, bz2, gzip, json, os, re, sys, collections, functools
 HERE = os.path.dirname(os.path.abspath(__file__))
 try:
     import wordfreq
-    ZIPF = lambda w: wordfreq.zipf_frequency(w, 'en')
+    ZIPF = functools.lru_cache(maxsize=None)(lambda w: wordfreq.zipf_frequency(w, 'en'))
 except Exception:
     ZIPF = lambda w: 4.0   # wordfreq が無いときは、やさしさの判定を省く
 
@@ -75,21 +77,36 @@ def detok_ja(text):
     out = re.sub(r'\.$', '。', out)
     out = out.replace(',', '、').replace('?', '？').replace('!', '！')
     return out
+def open_text(path):
+    if path.endswith('.bz2'): return bz2.open(path, 'rt', encoding='utf-8', errors='replace')
+    if path.endswith('.gz'): return gzip.open(path, 'rt', encoding='utf-8', errors='replace')
+    return open(path, encoding='utf-8', errors='replace')
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--en'); ap.add_argument('--ja'); ap.add_argument('--tsv')
+    ap.add_argument('--en'); ap.add_argument('--ja'); ap.add_argument('--tsv', nargs='+'); ap.add_argument('--no-merge', action='store_true')
     ap.add_argument('--master', default=os.path.join(HERE, 'data', 'words_master.json'))
     ap.add_argument('--out', default=os.path.join(HERE, 'js', 'data', 'examples.js'))
     a = ap.parse_args()
     pairs = []
     if a.tsv:
-        for line in open(a.tsv, encoding='utf-8'):
-            p = line.rstrip('\n').split('\t')
-            if len(p) >= 2 and p[0] and p[1]: pairs.append((p[0].split(), p[1]))
-    else:
+        seen_en = set()
+        for path in a.tsv:
+            with open_text(path) as fh:
+                for line in fh:
+                    p = line.rstrip('\n').split('\t')
+                    if len(p) >= 4 and p[0].isdigit() and p[2].isdigit(): en, ja = p[1], p[3]   # Tatoebaの形式：英語ID, 英語, 日本語ID, 日本語
+                    elif len(p) >= 2: en, ja = p[0], p[1]
+                    else: continue
+                    key = en.strip().lower()
+                    if not en.strip() or not ja.strip() or key in seen_en: continue
+                    seen_en.add(key); pairs.append((en.split(), ja))
+    elif a.en and a.ja:
         en = open(a.en, encoding='utf-8').read().splitlines(); ja = open(a.ja, encoding='utf-8').read().splitlines()
         for e, j in zip(en, ja):
             if e.strip() and j.strip(): pairs.append((e.split(), j))
+    else:
+        sys.exit('対訳ファイルを指定してください。例： python3 make_examples.py --tsv eng-jpn.tsv.bz2')
+    print(f'対訳の文の数: {len(pairs)}')
     words = json.load(open(a.master, encoding='utf-8'))
     # 見出し語の活用形 → 見出し語
     idx = collections.defaultdict(list)
@@ -117,7 +134,6 @@ def main():
             for wid in idx.get(t, ()):
                 if wid in seen: continue
                 seen.add(wid)
-                head = BYID[wid] if False else None
                 cand[wid].append((si, i, t))
         sents[si] = (en, sents[si][1], mean_z, len(alpha))
     byid = {w['id']: w for w in words}
@@ -143,6 +159,14 @@ def main():
         for en, ja, mz, n in [s for s in sents if len(s) == 4]:
             if re.search(r"\b" + re.escape(key) + r"\b", en.lower()):
                 m = re.search(re.escape(key), en, flags=re.I); chosen[w['id']] = [en, ja, m.group(0)]; break
+    kept = 0
+    if not a.no_merge and os.path.exists(a.out):   # 新しい対訳に無い語は、今ある例文を残す
+        for line in open(a.out, encoding='utf-8'):
+            m = re.match(r'EXAMPLES\[(\d+)\]=(.*);\s*$', line)
+            if m and int(m.group(1)) not in chosen:
+                try: chosen[int(m.group(1))] = json.loads(m.group(2)); kept += 1
+                except ValueError: pass
+        if kept: print(f'今ある例文を引き継いだ語: {kept}')
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
     with open(a.out, 'w', encoding='utf-8') as f:
         f.write("// 単語ごとの例文（英語・日本語訳・強調する語）。出典：田中コーパス／Tatoebaプロジェクト（CC BY 2.0 FR）。 ※make_examples.py で自動生成\n")

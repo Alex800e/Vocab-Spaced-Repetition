@@ -4,4 +4,4 @@
 //   空のままだと、同期の機能は使えません（アプリ自体は今までどおり動きます）。
 //   ※クライアントIDは公開されても安全な値です（秘密鍵ではありません）。
 // ==========================================
-var GOOGLE_CLIENT_ID = '1069021153890-ft1obfo15i40avv1nr94tt4pk915be3a.apps.googleusercontent.com';
+var GOOGLE_CLIENT_ID = '';
